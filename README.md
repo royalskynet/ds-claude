@@ -28,7 +28,7 @@ ds-run.sh
 Claude reads the diff, then accepts, retries, escalates, or takes over
 ```
 
-Claude still does the work itself in four cases: secrets or personal data, irreversible or public actions, pure judgment calls, and jobs of a single command or a one-line edit.
+Work with secrets or personal data, and irreversible or public actions, is dispatched only after the user agrees to that job. Without agreement, Claude does it. Claude also does pure judgment calls and jobs of a single command or a one-line edit.
 
 ## Install
 
@@ -43,8 +43,8 @@ opencode auth login   # choose OpenCode Go
 
 ### claude.ai / Cowork
 
-1. Download `ds-claude.skill` from [Releases](https://github.com/royalskynet/ds-claude/releases).
-2. Upload it in the Skills section of your Claude settings.
+1. Build the package: `cd skills && zip -r ds-claude.skill ds-claude`
+2. Upload `ds-claude.skill` in the Skills section of your Claude settings.
 3. Give Claude an `OPENCODE_API_KEY` when it asks. The cloud sandbox has no stored login.
 
 ## Requirements
@@ -113,7 +113,7 @@ Claude moves up one step at a time:
 1. Fix the spec, if the spec caused the failure.
 2. Retry once with flash.
 3. Retry once with pro.
-4. Take over and finish the job itself.
+4. Take over and finish the job itself. To set the worker's changes aside first, it runs `git stash push -u -m ds-claude-rollback`, which can be restored later.
 
 ## What the script changes on your machine
 
@@ -135,6 +135,15 @@ Claude moves up one step at a time:
 |---|---|
 | Claude Code on macOS | Tested: a real dispatch to `opencode-go/deepseek-v4.1-flash` on opencode v2.2.5 passed |
 | claude.ai / Cowork | Not tested. It needs the sandbox to install opencode with npm and to reach OpenCode |
+
+## Works with Genie
+
+[Genie Harness](https://github.com/royalskynet/genie-harness) was checked on a machine running both:
+
+- Genie's guard also runs inside the worker when its OpenCode plugin is installed. A worker's `git clean -fd` was blocked in testing, and the file stayed. A blocked worker fails acceptance or reports an error.
+- The rollback uses `git stash` because Genie blocks `git clean -f`.
+- Genie's wheel gate can refuse the first write of `task/verify.sh` once in a turn. Writing it again works.
+- Genie routes the word 派工 to another skill, so ds-claude does not trigger on it.
 
 ## FAQ
 

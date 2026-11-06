@@ -11,14 +11,16 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 ## 1. 分流
 
-只有下列情況 Claude 自己做，其餘全部派：
+預設全部派，只有下列情況例外：
 
-| 情況 | 原因 |
+| 情況 | 處理 |
 |---|---|
-| 含機密或個資（憑證、用戶資料、KYC、內部文件） | 不外送 |
-| 不可逆或對外的動作（push、部署、刪資料、發訊息） | worker 沒有沙箱 |
-| 純判斷（研判、口吻、取捨） | 寫不出驗收 |
-| 一條指令或改一行就完成 | 寫規格比動手久 |
+| 含機密或個資（憑證、用戶資料、KYC、內部文件） | 先問使用者，講明內容會送到第三方模型。同意才派，不同意就 Claude 自己做 |
+| 不可逆或對外的動作（push、部署、刪資料、發訊息） | 先問使用者，講明 worker 沒有沙箱。同意才派，不同意就 Claude 自己做 |
+| 純判斷（研判、口吻、取捨） | Claude 自己做，因為寫不出驗收 |
+| 一條指令或改一行就完成 | Claude 自己做，因為寫規格比動手久 |
+
+同意只算這一張工單，下一張要再問。
 
 工作量大不是自己做的理由：拆成多張依序派。要讀大量檔案時也派，叫 worker 把結論寫到 `task/notes.md`，Claude 只讀結論。驗收寫不出來時，先拆出寫得出來的部分派工，剩下的 Claude 做。
 
@@ -71,11 +73,13 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄>
 1. **改規格**：失敗來自規格不清。修 `task/` 後跑 `--retry`，不計次數。
 2. **flash 重做一次**：`ds-run.sh <工作目錄> --retry`。改動會保留，worker 會讀 `task/verify.log`。
 3. **pro 重做一次**：`ds-run.sh <工作目錄> --retry --pro`。
-4. **Claude 接手**：保留能用的部分，或還原後自己做：`git reset --hard "$(cat task/base)" && git clean -fd`。
+4. **Claude 接手**：保留能用的部分，或先收起 worker 的改動再自己做：`git stash push -u -m ds-claude-rollback`。收起的改動還拿得回來。
 
 `FAIL scope` 不直接重做：先看 `git status`，判斷越界的改動要留還是要還原。
 
 worker 沒有沙箱，可以寫到 repo 外。腳本只看得到 repo 內的改動。
+
+裝了 Genie 的機器上，Genie 的 guard 也會擋 worker 的危險指令。被擋時 worker 會失敗，照上面的順序處理，不要繞過 guard。
 
 ## 6. 紀錄
 

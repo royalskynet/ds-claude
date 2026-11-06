@@ -28,7 +28,7 @@ ds-run.sh
 Claude 看 diff，決定放行、重做、升級或接手
 ```
 
-有四種情況 Claude 仍然自己做：含機密或個資、不可逆或對外的動作、純判斷、一條指令或改一行就完成的事。
+含機密或個資的工作、不可逆或對外的動作，要使用者同意該張工單才派，不同意就由 Claude 做。純判斷、一條指令或改一行就完成的事，也由 Claude 做。
 
 ## 安裝
 
@@ -43,8 +43,8 @@ opencode auth login   # 選 OpenCode Go
 
 ### claude.ai／Cowork
 
-1. 到 [Releases](https://github.com/royalskynet/ds-claude/releases) 下載 `ds-claude.skill`。
-2. 在 Claude 設定的 Skills 區上傳。
+1. 打包：`cd skills && zip -r ds-claude.skill ds-claude`
+2. 在 Claude 設定的 Skills 區上傳 `ds-claude.skill`。
 3. Claude 要 `OPENCODE_API_KEY` 時提供給它。雲端沙箱沒有本機登入。
 
 ## 需求
@@ -112,7 +112,7 @@ Claude 一次升一級：
 1. 失敗來自規格不清，就修規格。
 2. 用 flash 重做一次。
 3. 用 pro 重做一次。
-4. Claude 接手完成。
+4. Claude 接手完成。要先收起 worker 的改動時，執行 `git stash push -u -m ds-claude-rollback`，之後還拿得回來。
 
 ## 腳本會動到你電腦上的什麼
 
@@ -134,6 +134,15 @@ Claude 一次升一級：
 |---|---|
 | macOS 上的 Claude Code | 已實測：opencode v2.2.5 真實派工給 `opencode-go/deepseek-v4.1-flash`，通過 |
 | claude.ai／Cowork | 尚未測試。需要沙箱能用 npm 安裝 opencode，而且連得到 OpenCode |
+
+## 與 Genie 並用
+
+已在同時裝有 [Genie Harness](https://github.com/royalskynet/genie-harness) 的機器上檢查：
+
+- 裝了 Genie 的 OpenCode 外掛時，Genie 的 guard 也會在 worker 裡運作。實測 worker 的 `git clean -fd` 被擋，檔案還在。被擋的 worker 會驗收失敗或回報錯誤。
+- 還原改用 `git stash`，因為 Genie 會擋 `git clean -f`。
+- Genie 的 wheel gate 可能在同一輪擋一次 `task/verify.sh` 的第一次寫入，再寫一次就過。
+- Genie 把「派工」這個詞路由給別的 skill，所以 ds-claude 不用這個詞觸發。
 
 ## 常見問題
 
