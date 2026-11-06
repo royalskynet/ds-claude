@@ -1,50 +1,148 @@
 # ds-claude
 
-A Claude skill that keeps Claude's hands off the keyboard. Claude writes the spec and the acceptance script. DeepSeek does the work through [OpenCode](https://opencode.ai) Go. An exit code decides whether it passed, and Claude makes the final call.
+**English** | [繁體中文](README.zh-TW.md)
 
-讓 Claude 盡量不動手的 skill：Claude 寫規格和驗收腳本，DeepSeek 經 OpenCode Go 動手，exit code 判定通過與否，最後由 Claude 裁決。
+A Claude skill that keeps Claude's hands off the keyboard. Claude writes the spec and the acceptance script. DeepSeek does the work through [OpenCode](https://opencode.ai) Go. An exit code decides whether the work passed, and Claude makes the final call.
+
+## Why
+
+Claude's tokens are the expensive part of most coding sessions, and much of that work is typing out a plan that is already clear. This skill moves the typing to a cheaper model and keeps Claude on the parts that need judgment.
+
+A cheap worker needs a check it cannot talk its way past. So the acceptance script is written before the work starts, and the result comes from an exit code. The worker's own report does not count.
+
+## How it works
 
 ```
-Claude: task/SPEC.md + task/scope.txt + task/verify.sh
+Claude writes task/SPEC.md, task/scope.txt, task/verify.sh
    │
    ▼
-ds-run.sh ── baseline: verify.sh must fail before the work
-   │
-   ├─ opencode run (DeepSeek flash)
-   ├─ scope check: every changed path must match scope.txt
-   └─ verify.sh, run from a copy the worker cannot edit
+ds-run.sh
+   ├─ 1. refuse a dirty working tree
+   ├─ 2. baseline: verify.sh must fail before any work
+   ├─ 3. opencode run with DeepSeek flash
+   ├─ 4. tamper check: the three task files must be unchanged
+   ├─ 5. scope check: every changed path must match scope.txt
+   └─ 6. verify.sh, run from a copy the worker cannot edit
    │
    ▼
-Claude: read the diff, then accept, retry, escalate to pro, or take over
+Claude reads the diff, then accepts, retries, escalates, or takes over
 ```
+
+Claude still does the work itself in four cases: secrets or personal data, irreversible or public actions, pure judgment calls, and jobs of a single command or a one-line edit.
 
 ## Install
 
-**Claude Code**
+### Claude Code
 
 ```bash
 git clone https://github.com/royalskynet/ds-claude
 cp -R ds-claude/skills/ds-claude ~/.claude/skills/
+npm i -g opencode-ai
 opencode auth login   # choose OpenCode Go
 ```
 
-**claude.ai / Cowork**: upload `ds-claude.skill` from [Releases](https://github.com/royalskynet/ds-claude/releases) under Settings → Capabilities → Skills. The sandbox has no stored login, so the skill needs `OPENCODE_API_KEY`.
+### claude.ai / Cowork
+
+1. Download `ds-claude.skill` from [Releases](https://github.com/royalskynet/ds-claude/releases).
+2. Upload it in the Skills section of your Claude settings.
+3. Give Claude an `OPENCODE_API_KEY` when it asks. The cloud sandbox has no stored login.
+
+## Requirements
+
+- An [OpenCode Go](https://opencode.ai) subscription
+- `git`, `bash` 3.2 or newer, and `opencode` v2 or newer
+- A work directory that is the root of a git repo with at least one commit
+
+## Usage
+
+Ask Claude for an implementation job, or name the skill: "use ds-claude to add CSV export". Claude writes three files in the work directory.
+
+`task/SPEC.md` holds the goal, the key decisions, and what the worker must not do:
+
+```markdown
+# Implement slug(s) in slug.py
+Lowercase the string, replace every run of non-alphanumeric characters
+with one hyphen, strip leading and trailing hyphens. Standard library only.
+```
+
+`task/scope.txt` lists the paths the worker may change, one glob per line. A `*` also matches across directories.
+
+```
+slug.py
+```
+
+`task/verify.sh` is the acceptance script. It runs from the work directory, and exit 0 means pass:
+
+```bash
+set -e
+python3 -c "from slug import slug; assert slug('  Hello, World!! ')=='hello-world'"
+```
+
+Then Claude runs the dispatcher:
+
+```bash
+bash skills/ds-claude/scripts/ds-run.sh <workdir>
+```
+
+| Flag | Effect |
+|---|---|
+| `--retry` | Keep the earlier changes and tell the worker to read `task/verify.log` |
+| `--pro` | Use the newest DeepSeek pro model instead of flash |
+| `--no-baseline` | Skip the "must fail first" check. Use it for refactors that keep behavior |
+| `--model <provider/model>` | Use a specific model |
+
+| Environment variable | Default | Effect |
+|---|---|---|
+| `DS_TIMEOUT` | `900` | Worker time limit in seconds |
+| `DS_MODEL` | newest flash | Same as `--model` |
+
+### Results
+
+| Exit | Last line | Meaning |
+|---|---|---|
+| 0 | `PASS` | Acceptance passed and all changes are in scope |
+| 1 | `FAIL verify` | Acceptance failed. See `task/verify.log` |
+| 2 | `FAIL scope` | A change is out of scope, or the worker edited a task file |
+| 3 | `FAIL setup` | A precondition failed. The worker did not start |
+| 4 | `FAIL worker` | opencode failed or timed out. See `task/exec.log` |
+
+### When a job fails
+
+Claude moves up one step at a time:
+
+1. Fix the spec, if the spec caused the failure.
+2. Retry once with flash.
+3. Retry once with pro.
+4. Take over and finish the job itself.
+
+## What the script changes on your machine
+
+- It adds `task/` to `.git/info/exclude`, so logs stay out of your diffs.
+- It writes `task/base`, `task/exec.log`, `task/verify.log`, `task/artifacts`, and `task/dispatch-log.tsv`.
+- It runs `task/verify.sh` on your machine, up to twice per dispatch.
+- It runs the worker with `opencode run --auto`, which approves tool calls without asking.
+- It does not commit, push, or reset anything. The changes stay uncommitted for Claude to review.
+
+## Warnings
+
+- **The worker is not sandboxed.** In testing, `opencode run` wrote outside the repo with and without `--auto`, and `OPENCODE_PERMISSION={"external_directory":"deny"}` did not stop it. The scope check only sees changes inside the repo. Run it only where a wrong write is recoverable.
+- **Your code goes to a third-party model.** Keep secrets and personal data out of dispatched work.
+- **Files in `.gitignore` are invisible to the scope check.**
 
 ## Status
 
 | Environment | State |
 |---|---|
-| Claude Code on macOS | Tested with a real dispatch to `opencode-go/deepseek-v4.1-flash` on opencode v2.2.5 |
-| claude.ai / Cowork | Not tested. It needs the sandbox to reach opencode and to install it with npm |
+| Claude Code on macOS | Tested: a real dispatch to `opencode-go/deepseek-v4.1-flash` on opencode v2.2.5 passed |
+| claude.ai / Cowork | Not tested. It needs the sandbox to install opencode with npm and to reach OpenCode |
 
-## Warnings
+## FAQ
 
-- **The worker is not sandboxed.** `opencode run --auto` wrote outside the repo in testing, and `OPENCODE_PERMISSION={"external_directory":"deny"}` did not stop it. The scope check only sees changes inside the repo. Do not dispatch in a directory or on an account you cannot afford to have touched.
-- **Your code goes to a third-party model.** Keep secrets and personal data out of dispatched work.
+**Why a script instead of a second model as reviewer?** A reviewer from the same model shares the worker's blind spots and costs a second run. A script gives the same answer every time.
 
-## Why a script instead of a second model as reviewer
+**Why must `verify.sh` fail first?** A check that already passes proves nothing about the work.
 
-A reviewer from the same model shares the worker's blind spots, and it costs a second run. `verify.sh` is written by Claude before the work starts, and it gives the same answer every time.
+**Does `opencode run` hang?** It does when stdin stays open, because it waits for end of input. `ds-run.sh` closes stdin for this reason. Use `</dev/null` if you call it yourself.
 
 ## Test
 
@@ -56,8 +154,8 @@ The tests run offline with a stub `opencode`.
 
 ## Related
 
-[aashahin/claude-opencode-delegate](https://github.com/aashahin/claude-opencode-delegate) is an MCP server that gives Claude every OpenCode model as a delegate. Use it if you want many models and no acceptance gate.
+[aashahin/claude-opencode-delegate](https://github.com/aashahin/claude-opencode-delegate) is an MCP server that gives Claude every OpenCode model as a delegate. It fits if you want many models and do not need an acceptance gate.
 
 ## License
 
-MIT
+[MIT](LICENSE)
