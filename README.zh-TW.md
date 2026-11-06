@@ -137,12 +137,12 @@ Claude 一次升一級：
 
 ## 與 Genie 並用
 
-已在同時裝有 [Genie Harness](https://github.com/royalskynet/genie-harness) 的機器上檢查：
+已在同時裝有 [Genie Harness](https://github.com/royalskynet/genie-harness) 的機器上檢查。裝了 ds-claude 後，派工規則以 ds-claude 為準，衝突的 Genie 部分要關掉。
 
-- 裝了 Genie 的 OpenCode 外掛時，Genie 的 guard 也會在 worker 裡運作。實測 worker 的 `git clean -fd` 被擋，檔案還在。被擋的 worker 會驗收失敗或回報錯誤。
-- 還原改用 `git stash`，因為 Genie 會擋 `git clean -f`。
-- Genie 的 wheel gate 可能在同一輪擋一次 `task/verify.sh` 的第一次寫入，再寫一次就過。
-- Genie 把「派工」這個詞路由給別的 skill，所以 ds-claude 不用這個詞觸發。
+- **wheel gate：有衝突。** 它可能在同一輪擋一次 `task/verify.sh` 的第一次寫入，再寫一次就過。要關掉時，在 Claude Code 設定的 `env` 加 `GENIE_WHEEL_GATE=0`。這會關掉所有工作的 wheel gate，較窄的例外已在 Genie repo 追蹤。
+- **guard：沒有衝突，保持開啟。** 裝了 Genie 的 OpenCode 外掛時，它也會在 worker 裡運作。實測 worker 的 `git clean -fd` 被擋，檔案還在。它是 worker 唯一的安全檢查。
+- **還原。** 改用 `git stash`，因為 Genie 會擋 `git clean -f`。
+- **「派工」這個詞。** ds-claude 不用它觸發，留給你本機已有的路由。
 
 ## 常見問題
 

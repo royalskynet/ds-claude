@@ -79,7 +79,12 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄>
 
 worker 沒有沙箱，可以寫到 repo 外。腳本只看得到 repo 內的改動。
 
-裝了 Genie 的機器上，Genie 的 guard 也會擋 worker 的危險指令。被擋時 worker 會失敗，照上面的順序處理，不要繞過 guard。
+## 與 Genie 並用
+
+裝了 ds-claude 後，派工分流以本 skill 為準，和 Genie 衝突時關掉 Genie 那一部分：
+
+- **wheel gate**：派工寫 `task/` 不算自造，不用先跑 wheel。被擋時再寫一次就過。要整個關掉，在 Claude Code 設定的 `env` 加 `GENIE_WHEEL_GATE=0`，這會影響所有工作，要先問使用者。
+- **guard 不算衝突，保持開啟**：它是 worker 唯一的安全檢查。被擋時 worker 會失敗，照第 5 節的順序處理，不要繞過 guard。
 
 ## 6. 紀錄
 
