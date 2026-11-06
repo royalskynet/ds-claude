@@ -60,7 +60,7 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄>
 |---|---|---|
 | 0 | `PASS` | 驗收通過且未超出範圍 |
 | 1 | `FAIL verify` | 驗收失敗，看 `task/verify.log` |
-| 2 | `FAIL scope` | 改到範圍外，或 worker 動了 `task/` 的三個檔 |
+| 2 | `FAIL scope` | 改到範圍外，或 worker 動了 `task/` 的工單檔（已還原） |
 | 3 | `FAIL setup` | 派工前的條件不符，worker 沒有啟動 |
 | 4 | `FAIL worker` | opencode 報錯或逾時，看 `task/exec.log` |
 

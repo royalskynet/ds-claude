@@ -20,9 +20,9 @@ ds-run.sh
    ├─ 1. 工作目錄有未提交的改動就拒絕
    ├─ 2. 基線：動工前 verify.sh 必須失敗
    ├─ 3. opencode run 交給 DeepSeek flash
-   ├─ 4. 竄改檢查：task 三個檔必須沒變
+   ├─ 4. 竄改檢查：task 的檔案必須沒變
    ├─ 5. 範圍檢查：每個改動的路徑都要符合 scope.txt
-   └─ 6. 跑 verify.sh（用 worker 改不到的副本）
+   └─ 6. 用 worker 動工前留的副本跑 verify.sh，再做一次第 4、5 步
    │
    ▼
 Claude 看 diff，決定放行、重做、升級或接手
@@ -119,12 +119,13 @@ Claude 一次升一級：
 - 把 `task/` 加進 `.git/info/exclude`，讓 log 不出現在 diff 裡。
 - 寫入 `task/base`、`task/exec.log`、`task/verify.log`、`task/artifacts`、`task/dispatch-log.tsv`。
 - 在你的電腦上執行 `task/verify.sh`，每次派工最多兩次。
+- 替 worker 和 `verify.sh` 設定 `PYTHONDONTWRITEBYTECODE=1`，避免 Python 快取檔造成範圍檢查失敗。
 - 用 `opencode run --auto` 跑 worker，工具呼叫不會逐一詢問。
 - 不會 commit、push 或 reset。改動留在工作目錄，等 Claude 審查。
 
 ## 注意事項
 
-- **worker 沒有沙箱。** 實測時不論有沒有 `--auto`，`opencode run` 都能寫到 repo 外，`OPENCODE_PERMISSION={"external_directory":"deny"}` 也擋不住。範圍檢查只看得到 repo 內的改動。只在寫錯還救得回來的地方使用。
+- **worker 沒有沙箱。** 這些檢查抓得到失誤和取巧，擋不住存心破解檢查的 worker。實測時不論有沒有 `--auto`，`opencode run` 都能寫到 repo 外，`OPENCODE_PERMISSION={"external_directory":"deny"}` 也擋不住。範圍檢查只看得到 repo 內的改動。只在寫錯還救得回來的地方使用。
 - **你的程式碼會送到第三方模型。** 派出去的工作不要含機密或個資。
 - **範圍檢查看不到 `.gitignore` 裡的檔案。**
 

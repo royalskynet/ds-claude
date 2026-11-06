@@ -20,6 +20,13 @@ case "$FAKE_MODE" in
   crash)   echo ok > src/a.txt; exit 7 ;;
   hang)    cat >/dev/null; sleep 30 ;;
   stdin)   cat >/dev/null; echo ok > src/a.txt ;;
+  pycache) echo ok > src/a.txt; python3 -c "import tool" ;;
+  hide)    echo ok > src/a.txt; echo x > other.txt; echo other.txt >> task/artifacts ;;
+  tamper2) echo '*' > task/scope.txt; printf 'exit 0\n' > task/verify.sh ;;
+  badbase) echo ok > src/a.txt; echo deadbeef > task/base ;;
+  nogit)   echo ok > src/a.txt; mv .git .git.gone ;;
+  snap)    for d in "$TMPDIR"/ds-run.*; do printf 'exit 0\n' > "$d/verify.sh"; done; printf 'exit 0\n' > task/verify.sh ;;
+  orphan)  (sleep 2; echo late > src/late.txt) & sleep 30 ;;
 esac
 STUB
 chmod +x "$tmp/bin/opencode"
@@ -71,6 +78,21 @@ repo; printf 'exit 0\n' > task/verify.sh; check "no-baseline allows a green veri
 repo; printf 'mkdir -p cache; echo x > cache/o\ngrep -q ok src/a.txt\n' > task/verify.sh
 check "verify artifacts: first attempt fails" 1 nothing
 check "verify artifacts: not counted on retry" 0 good --retry
+repo; echo "x=1" > tool.py; git add tool.py; git commit -qm tool; check "python cache is not a scope change" 0 pycache
+repo; check "worker cannot hide a change in task/artifacts" 2 hide
+repo; check "two tampered task files: exit" 2 tamper2
+n=$((n+1)); if cmp -s task/verify.sh <(printf 'set -e\ngrep -q ok src/a.txt\n') && [ "$(cat task/scope.txt)" = 'src/*' ]; then echo "ok   two tampered task files: both restored"; else echo "FAIL both restored"; fails=$((fails+1)); fi
+repo; check "worker cannot change task/base" 2 badbase
+repo; check "a broken git repo is not a clean tree" 2 nogit
+repo; mkdir "$tmp/t"; TMPDIR="$tmp/t" check "worker cannot edit the snapshot" 2 snap
+repo; echo a > root.txt; git add root.txt; git commit -qm root; printf 'set -e\ngrep -q ok src/a.txt\necho y >> root.txt\n' > task/verify.sh; check "scope is checked again after verify" 2 good
+repo; DS_TIMEOUT=1 check "timeout: exit" 4 orphan; sleep 3
+n=$((n+1)); if [ ! -e src/late.txt ]; then echo "ok   timeout kills the worker's children"; else echo "FAIL orphan wrote a file"; fails=$((fails+1)); fi
+if PATH="$tmp/bin:/usr/bin:/bin" command -v timeout >/dev/null; then echo "skip perl timeout: this system has timeout in /usr/bin"
+else
+  repo; PATH="$tmp/bin:/usr/bin:/bin" DS_TIMEOUT=1 check "perl timeout: exit" 4 orphan; sleep 3
+  n=$((n+1)); if [ ! -e src/late.txt ]; then echo "ok   perl timeout kills the worker's children"; else echo "FAIL perl orphan wrote a file"; fails=$((fails+1)); fi
+fi
 repo; mkdir sub; check_dir="$tmp/r/sub"; n=$((n+1))
 if FAKE_MODE=good bash "$run" "$check_dir" >/dev/null 2>&1; [ $? = 3 ]; then echo "ok   subdirectory refused"; else echo "FAIL subdirectory refused"; fails=$((fails+1)); fi
 

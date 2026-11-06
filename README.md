@@ -20,9 +20,9 @@ ds-run.sh
    ├─ 1. refuse a dirty working tree
    ├─ 2. baseline: verify.sh must fail before any work
    ├─ 3. opencode run with DeepSeek flash
-   ├─ 4. tamper check: the three task files must be unchanged
+   ├─ 4. tamper check: the task files must be unchanged
    ├─ 5. scope check: every changed path must match scope.txt
-   └─ 6. verify.sh, run from a copy the worker cannot edit
+   └─ 6. verify.sh from a copy taken before the worker starts, then checks 4 and 5 again
    │
    ▼
 Claude reads the diff, then accepts, retries, escalates, or takes over
@@ -120,12 +120,13 @@ Claude moves up one step at a time:
 - It adds `task/` to `.git/info/exclude`, so logs stay out of your diffs.
 - It writes `task/base`, `task/exec.log`, `task/verify.log`, `task/artifacts`, and `task/dispatch-log.tsv`.
 - It runs `task/verify.sh` on your machine, up to twice per dispatch.
+- It sets `PYTHONDONTWRITEBYTECODE=1` for the worker and `verify.sh`, so Python caches do not fail the scope check.
 - It runs the worker with `opencode run --auto`, which approves tool calls without asking.
 - It does not commit, push, or reset anything. The changes stay uncommitted for Claude to review.
 
 ## Warnings
 
-- **The worker is not sandboxed.** In testing, `opencode run` wrote outside the repo with and without `--auto`, and `OPENCODE_PERMISSION={"external_directory":"deny"}` did not stop it. The scope check only sees changes inside the repo. Run it only where a wrong write is recoverable.
+- **The worker is not sandboxed.** The checks catch mistakes and shortcuts. They do not stop a worker that sets out to defeat them. In testing, `opencode run` wrote outside the repo with and without `--auto`, and `OPENCODE_PERMISSION={"external_directory":"deny"}` did not stop it. The scope check only sees changes inside the repo. Run it only where a wrong write is recoverable.
 - **Your code goes to a third-party model.** Keep secrets and personal data out of dispatched work.
 - **Files in `.gitignore` are invisible to the scope check.**
 

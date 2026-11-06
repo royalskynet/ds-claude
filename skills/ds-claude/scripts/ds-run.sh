@@ -3,6 +3,8 @@
 # Usage: ds-run.sh <workdir> [--retry] [--pro] [--no-baseline] [--model provider/model]
 # Exit:  0 PASS | 1 verify failed | 2 out of scope or task/ tampered | 3 setup | 4 worker error
 set -uo pipefail
+# A worker that runs Python would otherwise leave __pycache__ and trip the scope check.
+export PYTHONDONTWRITEBYTECODE=1
 
 finish() { echo "$2"; exit "$1"; }
 setup_fail() { finish 3 "FAIL setup: $1"; }
@@ -45,8 +47,8 @@ if [ -z "$model" ]; then
   [ -n "$model" ] || setup_fail "no opencode-go deepseek $tier model; check opencode auth list"
 fi
 
-# verify.sh runs from a copy taken now, so the worker cannot pass by editing it.
-snap="$(mktemp -d)"; trap 'rm -rf "$snap"' EXIT
+# verify.sh runs from a copy taken now, so editing task/verify.sh does not change the result.
+snap="$(mktemp -d "${TMPDIR:-/tmp}/ds-run.XXXXXX")"; trap 'rm -rf "$snap"' EXIT
 cp task/SPEC.md task/scope.txt task/verify.sh "$snap/"
 
 # Files that verify.sh itself creates (__pycache__, build output) are not worker changes.
@@ -66,13 +68,24 @@ if [ "$retry" = 0 ]; then
   fi
 fi
 
-prompt="Do the work described in task/SPEC.md. Only change paths allowed by task/scope.txt. Do not edit anything under task/. Do not commit. When done, list the files you changed."
+# The checksum lives in this process, so a changed snapshot is caught too. This is a check, not a sandbox.
+touch task/artifacts
+cp task/artifacts task/base "$snap/"
+snapsum() { (cd "$snap" && cat SPEC.md scope.txt verify.sh artifacts base) | cksum; }
+sum="$(snapsum)"
+
+prompt="Do the work described in task/SPEC.md. Only change paths allowed by task/scope.txt. Do not edit anything under task/, except task/notes.md when task/SPEC.md asks for it. Do not commit. When done, list the files you changed."
 [ "$retry" = 1 ] && prompt="$prompt The previous attempt failed acceptance: read task/verify.log and fix the cause. Your earlier changes are still in the working tree."
 
 limit="${DS_TIMEOUT:-900}"
 run_limited() {
   local t; t="$(command -v timeout || command -v gtimeout || true)"
-  if [ -n "$t" ]; then "$t" "$limit" "$@"; else perl -e 'alarm shift; exec @ARGV' "$limit" "$@"; fi
+  if [ -n "$t" ]; then "$t" "$limit" "$@"; return; fi
+  # macOS has no timeout. Kill the whole process group, or the worker's tools keep writing files.
+  perl -e 'my $t = shift; my $p = fork; die unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
+    $SIG{ALRM} = sub { kill "KILL", -$p; waitpid($p, 0); exit 124 };
+    alarm $t; waitpid($p, 0); exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$limit" "$@"
 }
 
 # </dev/null is required: opencode run waits for stdin EOF and hangs on an open pipe.
@@ -81,29 +94,44 @@ worker=$?
 
 log() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$(sed -n '1p' task/SPEC.md | cut -c1-60)" "$model" "$1" "$retry" >> task/dispatch-log.tsv; }
 
-for f in SPEC.md scope.txt verify.sh; do
-  cmp -s "$snap/$f" "task/$f" || { cp "$snap/$f" "task/$f"; log "scope"; finish 2 "FAIL scope: worker edited task/$f (restored)"; }
-done
+# Restore every edited file before reporting, so a retry never trusts a forged one.
+check_task() {
+  local f bad=""
+  for f in "$@"; do
+    cmp -s "$snap/$f" "task/$f" || { cp "$snap/$f" "task/$f"; bad="$bad task/$f"; }
+  done
+  [ -z "$bad" ] || { log "scope"; finish 2 "FAIL scope: worker edited$bad (restored)"; }
+}
+
+[ "$(snapsum)" = "$sum" ] || { log "scope"; finish 2 "FAIL scope: worker edited the verify snapshot"; }
+check_task SPEC.md scope.txt verify.sh artifacts base
 
 if [ "$worker" -ne 0 ]; then log "worker"; finish 4 "FAIL worker: opencode exit $worker, see task/exec.log"; fi
 
-touch task/artifacts
-changed="$( { git -c core.quotePath=false diff --name-only --no-renames "$base"; untracked; } | sort -u | grep -vxFf task/artifacts )"
-outside=""
-while IFS= read -r path; do
-  [ -n "$path" ] || continue
-  ok=0
-  while IFS= read -r glob; do
-    [ -n "$glob" ] || continue
-    # shellcheck disable=SC2254
-    case "$path" in $glob) ok=1; break ;; esac
-  done < "$snap/scope.txt"
-  [ "$ok" = 1 ] || outside="$outside $path"
-done <<< "$changed"
-if [ -n "$outside" ]; then log "scope"; finish 2 "FAIL scope: changed outside task/scope.txt:$outside"; fi
+check_scope() {
+  local tracked new path glob ok outside=""
+  tracked="$(git -c core.quotePath=false diff --name-only --no-renames "$base")" &&
+    new="$(untracked)" || { log "scope"; finish 2 "FAIL scope: git could not list the changes"; }
+  changed="$(printf '%s\n%s\n' "$tracked" "$new" | sort -u | grep -vxFf task/artifacts)"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    ok=0
+    while IFS= read -r glob; do
+      [ -n "$glob" ] || continue
+      # shellcheck disable=SC2254
+      case "$path" in $glob) ok=1; break ;; esac
+    done < "$snap/scope.txt"
+    [ "$ok" = 1 ] || outside="$outside $path"
+  done <<< "$changed"
+  if [ -n "$outside" ]; then log "scope"; finish 2 "FAIL scope: changed outside task/scope.txt:$outside"; fi
+}
 
+check_scope
 run_verify
 verified=$?
+# verify.sh runs code the worker wrote, so check again after it.
+check_task SPEC.md scope.txt verify.sh
+check_scope
 count="$(printf '%s' "$changed" | grep -c . || true)"
 if [ "$verified" -ne 0 ]; then log "verify"; finish 1 "FAIL verify: exit $verified, $count files changed, see task/verify.log"; fi
 log "pass"
