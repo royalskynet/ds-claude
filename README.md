@@ -141,7 +141,7 @@ Claude moves up one step at a time:
 
 [Genie Harness](https://github.com/royalskynet/genie-harness) was checked on a machine running both. Once ds-claude is installed, its dispatch rules win, and any Genie part that conflicts gets turned off.
 
-- **Wheel gate: conflict.** It can refuse the first write of `task/verify.sh` once in a turn. Writing it again works. To turn it off, add `GENIE_WHEEL_GATE=0` to `env` in your Claude Code settings. That turns it off for all work, so a narrower exemption is tracked in the Genie repo.
+- **Wheel gate: solved in Genie 0.5.8.** When ds-claude is installed, the gate skips `task/verify.sh`. Older Genie versions can refuse its first write once in a turn; writing it again works.
 - **Guard: no conflict, stays on.** It also runs inside the worker when Genie's OpenCode plugin is installed. A worker's `git clean -fd` was blocked in testing, and the file stayed. It is the only safety check the worker has.
 - **Rollback.** It uses `git stash` because Genie blocks `git clean -f`.
 - **The word 派工.** ds-claude does not trigger on it, so it stays free for any local routing you already have.

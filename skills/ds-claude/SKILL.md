@@ -26,7 +26,7 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 ## 2. 準備
 
-- `which opencode || npm i -g opencode-ai`
+- `command -v opencode` 找不到，或沒有 OpenCode Go 登入：這次由 Claude 自己做，回報裡用一句話說明要裝 `opencode` 並登入 OpenCode Go 才能派工。不自動 `npm i -g`，那是全域安裝，使用者說要才裝。
 - 認證依環境：
   - **Claude Code（本機）**：`opencode auth list` 要看到 OpenCode Go。沒有就請使用者自己跑 `opencode auth login`。
   - **claude.ai／Cowork（雲端沙箱）**：沒有本機登入，需要環境變數 `OPENCODE_API_KEY`。沒有就向使用者要，只在指令內 `export`。沙箱連不到 opencode 時，回報並由 Claude 自己做。
@@ -83,7 +83,7 @@ worker 沒有沙箱，可以寫到 repo 外。腳本只看得到 repo 內的改�
 
 裝了 ds-claude 後，派工分流以本 skill 為準，和 Genie 衝突時關掉 Genie 那一部分：
 
-- **wheel gate**：派工寫 `task/` 不算自造，不用先跑 wheel。被擋時再寫一次就過。要整個關掉，在 Claude Code 設定的 `env` 加 `GENIE_WHEEL_GATE=0`，這會影響所有工作，要先問使用者。
+- **wheel gate**：派工寫 `task/` 不算自造，不用先跑 wheel。Genie 0.5.8 起，裝了 ds-claude 就不擋 `task/verify.sh`。更舊的 Genie 被擋時再寫一次就過；不要用 `GENIE_WHEEL_GATE=0` 整個關掉，那會影響所有工作。
 - **guard 不算衝突，保持開啟**：它是 worker 唯一的安全檢查。被擋時 worker 會失敗，照第 5 節的順序處理，不要繞過 guard。
 
 ## 6. 紀錄
