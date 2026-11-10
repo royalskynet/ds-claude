@@ -101,11 +101,13 @@ check "lint: --no-lint allows it" 0 good --no-lint
 repo; for i in $(seq 41); do echo "# line $i"; done > task/SPEC.md; check "lint: big spec alone passes" 0 good
 repo; printf 'set -e\n! grep -q zzz src/keep.txt\ngrep -q ok src/a.txt\n' > task/verify.sh; check "lint: bare negation refused" 3 good
 repo; rm task/SPEC.md task/scope.txt task/verify.sh; check "ask: answer saved" 0 answer --ask "where is keep"
+expect "ask: logged as pass" grep -q "ask: where is keep.*pass" task/dispatch-log.tsv
 expect "ask: notes has the answer" grep -q 'src/keep.txt:1' task/notes.md
 expect "ask: uses the plan agent" grep -q -- '--agent plan' "$FAKE_ARGS"
 n=$((n+1)); if grep -q -- '--auto' "$FAKE_ARGS"; then echo "FAIL ask: never auto-approves"; fails=$((fails+1)); else echo "ok   ask: never auto-approves"; fi
 repo; check "ask: file change refused" 2 askwrite --ask "q"
 repo; check "ask: empty answer refused" 4 nothing --ask "q"
+expect "ask: failure logged" grep -q "ask: q.*worker" task/dispatch-log.tsv
 repo; mkdir sub; check_dir="$tmp/r/sub"; n=$((n+1))
 if FAKE_MODE=good bash "$run" "$check_dir" >/dev/null 2>&1; [ $? = 3 ]; then echo "ok   subdirectory refused"; else echo "FAIL subdirectory refused"; fails=$((fails+1)); fi
 

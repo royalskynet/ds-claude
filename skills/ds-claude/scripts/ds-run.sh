@@ -46,14 +46,16 @@ run_limited() {
 
 if [ -n "$ask" ]; then
   mkdir -p task
+  asklog() { printf '%s\t%s\t%s\t%s\t0\n' "$(date +%F)" "ask: $(printf '%s' "$ask" | tr '\t\n' '  ' | cut -c1-55)" "$model" "$1" >> task/dispatch-log.tsv; }
   before="$(git status --porcelain 2>/dev/null | grep -v ' task/' || true)"
   prompt="Answer the question by reading files in this directory. Do not create, edit or delete any file. Reply with conclusions and path:line references only, no file dumps. Question: $ask"
   run_limited opencode run --agent plan -m "$model" "$prompt" > task/notes.md 2> task/exec.log </dev/null
   worker=$?
   after="$(git status --porcelain 2>/dev/null | grep -v ' task/' || true)"
-  if [ "$worker" -ne 0 ]; then finish 4 "FAIL worker: opencode exit $worker, see task/exec.log"; fi
-  [ "$after" = "$before" ] || finish 2 "FAIL scope: ask mode changed files"
-  [ -s task/notes.md ] || finish 4 "FAIL worker: empty answer"
+  if [ "$worker" -ne 0 ]; then asklog worker; finish 4 "FAIL worker: opencode exit $worker, see task/exec.log"; fi
+  [ "$after" = "$before" ] || { asklog scope; finish 2 "FAIL scope: ask mode changed files"; }
+  [ -s task/notes.md ] || { asklog worker; finish 4 "FAIL worker: empty answer"; }
+  asklog pass
   finish 0 "PASS: answer in task/notes.md, model $model"
 fi
 
