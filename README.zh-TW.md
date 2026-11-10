@@ -105,6 +105,18 @@ bash skills/ds-claude/scripts/ds-run.sh <工作目錄>
 | 3 | `FAIL setup` | 前置條件不符，worker 沒有啟動 |
 | 4 | `FAIL worker` | opencode 報錯或逾時，看 `task/exec.log` |
 
+### 唯讀查詢
+
+```bash
+bash skills/ds-claude/scripts/ds-run.sh <工作目錄> --ask "問題"
+```
+
+worker 只讀檔，答案寫到 `task/notes.md`。不用寫 task 檔，工作目錄也不必是 git repo。答案是空的，或 `git status` 顯示有檔案被改，腳本就判失敗。
+
+### 工單大小檢查
+
+派工前腳本會拒絕兩種工單：`SPEC.md` 超過 40 行而且 `scope.txt` 超過 2 個 glob 的，以及 `verify.sh` 裡有單獨一行 `! cmd` 的。拆成多張，或加 `--no-lint`。
+
 ### 失敗時
 
 Claude 一次升一級：
@@ -164,6 +176,8 @@ bash tests/test.sh
 ## 相關專案
 
 [aashahin/claude-opencode-delegate](https://github.com/aashahin/claude-opencode-delegate) 是 MCP server，讓 Claude 把工作派給 OpenCode 裡的任何模型。想用多種模型、不需要驗收閘時適合它。
+
+`SKILL.md` 的分流表與兩條守則（任務中途不換主模型；規格明確不保證小模型夠用）改寫自 [Rajvardhman05/claude-model-router](https://github.com/Rajvardhman05/claude-model-router)（MIT）。
 
 ## 授權
 

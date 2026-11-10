@@ -106,6 +106,18 @@ bash skills/ds-claude/scripts/ds-run.sh <workdir>
 | 3 | `FAIL setup` | A precondition failed. The worker did not start |
 | 4 | `FAIL worker` | opencode failed or timed out. See `task/exec.log` |
 
+### Read-only questions
+
+```bash
+bash skills/ds-claude/scripts/ds-run.sh <workdir> --ask "question"
+```
+
+The worker reads files and writes its answer to `task/notes.md`. No task files and no git repo are needed. The script fails the run if the answer is empty or if `git status` shows a changed file.
+
+### Order size check
+
+Before dispatch the script refuses an order whose `SPEC.md` is over 40 lines and whose `scope.txt` has more than 2 globs, and a `verify.sh` with a bare `! cmd` line. Split the order, or pass `--no-lint`.
+
 ### When a job fails
 
 Claude moves up one step at a time:
@@ -165,6 +177,8 @@ The tests run offline with a stub `opencode`.
 ## Related
 
 [aashahin/claude-opencode-delegate](https://github.com/aashahin/claude-opencode-delegate) is an MCP server that gives Claude every OpenCode model as a delegate. It fits if you want many models and do not need an acceptance gate.
+
+The routing table and the two guards in `SKILL.md` (do not switch the main model mid-task; a clear spec does not guarantee a small model is enough) are adapted from [Rajvardhman05/claude-model-router](https://github.com/Rajvardhman05/claude-model-router) (MIT).
 
 ## License
 

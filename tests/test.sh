@@ -27,6 +27,8 @@ case "$FAKE_MODE" in
   nogit)   echo ok > src/a.txt; mv .git .git.gone ;;
   snap)    for d in "$TMPDIR"/ds-run.*; do printf 'exit 0\n' > "$d/verify.sh"; done; printf 'exit 0\n' > task/verify.sh ;;
   orphan)  (sleep 2; echo late > src/late.txt) & sleep 30 ;;
+  answer)  echo "src/keep.txt:1 keep" ;;
+  askwrite) echo "src/keep.txt:1 keep"; echo x > src/new.txt ;;
 esac
 STUB
 chmod +x "$tmp/bin/opencode"
@@ -93,6 +95,17 @@ else
   repo; PATH="$tmp/bin:/usr/bin:/bin" DS_TIMEOUT=1 check "perl timeout: exit" 4 orphan; sleep 3
   n=$((n+1)); if [ ! -e src/late.txt ]; then echo "ok   perl timeout kills the worker's children"; else echo "FAIL perl orphan wrote a file"; fails=$((fails+1)); fi
 fi
+repo; for i in $(seq 41); do echo "# line $i"; done > task/SPEC.md; printf 'src/*\na/*\nb/*\n' > task/scope.txt; check "lint: big spec with wide scope refused" 3 good
+expect "lint: worker not started" test ! -s "$FAKE_ARGS"
+check "lint: --no-lint allows it" 0 good --no-lint
+repo; for i in $(seq 41); do echo "# line $i"; done > task/SPEC.md; check "lint: big spec alone passes" 0 good
+repo; printf 'set -e\n! grep -q zzz src/keep.txt\ngrep -q ok src/a.txt\n' > task/verify.sh; check "lint: bare negation refused" 3 good
+repo; rm task/SPEC.md task/scope.txt task/verify.sh; check "ask: answer saved" 0 answer --ask "where is keep"
+expect "ask: notes has the answer" grep -q 'src/keep.txt:1' task/notes.md
+expect "ask: uses the plan agent" grep -q -- '--agent plan' "$FAKE_ARGS"
+n=$((n+1)); if grep -q -- '--auto' "$FAKE_ARGS"; then echo "FAIL ask: never auto-approves"; fails=$((fails+1)); else echo "ok   ask: never auto-approves"; fi
+repo; check "ask: file change refused" 2 askwrite --ask "q"
+repo; check "ask: empty answer refused" 4 nothing --ask "q"
 repo; mkdir sub; check_dir="$tmp/r/sub"; n=$((n+1))
 if FAKE_MODE=good bash "$run" "$check_dir" >/dev/null 2>&1; [ $? = 3 ]; then echo "ok   subdirectory refused"; else echo "FAIL subdirectory refused"; fails=$((fails+1)); fi
 

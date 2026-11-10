@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run one DeepSeek work order through opencode, then judge it by task/verify.sh.
-# Usage: ds-run.sh <workdir> [--retry] [--pro] [--no-baseline] [--model provider/model]
+# Usage: ds-run.sh <workdir> [--retry] [--pro] [--no-baseline] [--no-lint] [--model provider/model] [--ask "question"]
 # Exit:  0 PASS | 1 verify failed | 2 out of scope or task/ tampered | 3 setup | 4 worker error
 set -uo pipefail
 # A worker that runs Python would otherwise leave __pycache__ and trip the scope check.
@@ -9,25 +9,72 @@ export PYTHONDONTWRITEBYTECODE=1
 finish() { echo "$2"; exit "$1"; }
 setup_fail() { finish 3 "FAIL setup: $1"; }
 
-dir=""; retry=0; baseline=1; tier=flash; model="${DS_MODEL:-}"
+dir=""; retry=0; baseline=1; lint=1; tier=flash; model="${DS_MODEL:-}"; ask=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --retry) retry=1 ;;
     --pro) tier=pro ;;
     --no-baseline) baseline=0 ;;
+    --no-lint) lint=0 ;;
     --model) [ $# -ge 2 ] || setup_fail "--model needs a value"; model="$2"; shift ;;
+    --ask) [ $# -ge 2 ] || setup_fail "--ask needs a question"; ask="$2"; shift ;;
     -*) setup_fail "unknown flag $1" ;;
     *) dir="$1" ;;
   esac
   shift
 done
 
-[ -n "$dir" ] && [ -d "$dir" ] || setup_fail "usage: ds-run.sh <workdir> [--retry] [--pro] [--model m]"
+[ -n "$dir" ] && [ -d "$dir" ] || setup_fail "usage: ds-run.sh <workdir> [--retry] [--pro] [--no-lint] [--model m] [--ask \"question\"]"
 cd "$dir" || setup_fail "cannot enter $dir"
 command -v opencode >/dev/null || setup_fail "opencode not found"
+
+if [ -z "$model" ]; then
+  model="$(opencode models 2>/dev/null </dev/null | grep -E "^opencode-go/deepseek.*$tier" | sort -V | tail -1)"
+  [ -n "$model" ] || setup_fail "no opencode-go deepseek $tier model; check opencode auth list"
+fi
+
+limit="${DS_TIMEOUT:-900}"
+run_limited() {
+  local t; t="$(command -v timeout || command -v gtimeout || true)"
+  if [ -n "$t" ]; then "$t" "$limit" "$@"; return; fi
+  # macOS has no timeout. Kill the whole process group, or the worker's tools keep writing files.
+  perl -e 'my $t = shift; my $p = fork; die unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
+    $SIG{ALRM} = sub { kill "KILL", -$p; waitpid($p, 0); exit 124 };
+    alarm $t; waitpid($p, 0); exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$limit" "$@"
+}
+
+if [ -n "$ask" ]; then
+  mkdir -p task
+  before="$(git status --porcelain 2>/dev/null | grep -v ' task/' || true)"
+  prompt="Answer the question by reading files in this directory. Do not create, edit or delete any file. Reply with conclusions and path:line references only, no file dumps. Question: $ask"
+  run_limited opencode run --agent plan -m "$model" "$prompt" > task/notes.md 2> task/exec.log </dev/null
+  worker=$?
+  after="$(git status --porcelain 2>/dev/null | grep -v ' task/' || true)"
+  if [ "$worker" -ne 0 ]; then finish 4 "FAIL worker: opencode exit $worker, see task/exec.log"; fi
+  [ "$after" = "$before" ] || finish 2 "FAIL scope: ask mode changed files"
+  [ -s task/notes.md ] || finish 4 "FAIL worker: empty answer"
+  finish 0 "PASS: answer in task/notes.md, model $model"
+fi
+
 git rev-parse --verify -q HEAD >/dev/null || setup_fail "need a git repo with at least one commit"
 [ "$(git rev-parse --show-toplevel)" = "$(pwd -P)" ] || setup_fail "workdir must be the repo root"
 for f in SPEC.md scope.txt verify.sh; do [ -s "task/$f" ] || setup_fail "missing task/$f"; done
+
+if [ "$lint" = 1 ]; then
+  # Threshold borrowed from dispatch-router deep-lint's split stats (168 dispatches, only 11/32 passed at 2+ points).
+  if grep -Eq '^[[:space:]]*! ' task/verify.sh; then
+    setup_fail "lint: task/verify.sh has a bare '! cmd' line; under set -e it never fails. Use: if cmd; then exit 1; fi"
+  fi
+  spec_lines="$(wc -l < task/SPEC.md)"
+  scope_globs="$(grep -c '[^[:space:]]' task/scope.txt || true)"
+  score=0
+  [ "$spec_lines" -gt 40 ] && score=$((score + 1))
+  [ "$scope_globs" -gt 2 ] && score=$((score + 1))
+  if [ "$score" -ge 2 ]; then
+    setup_fail "lint: work order too big (SPEC.md $spec_lines lines > 40, scope.txt $scope_globs globs > 2); split it into several orders, or pass --no-lint"
+  fi
+fi
 
 # task/ holds logs and the work order, so it stays out of every diff.
 exclude="$(git rev-parse --git-path info/exclude)"
@@ -41,11 +88,6 @@ else
   git rev-parse HEAD > task/base
 fi
 base="$(cat task/base)"
-
-if [ -z "$model" ]; then
-  model="$(opencode models 2>/dev/null </dev/null | grep -E "^opencode-go/deepseek.*$tier" | sort -V | tail -1)"
-  [ -n "$model" ] || setup_fail "no opencode-go deepseek $tier model; check opencode auth list"
-fi
 
 # verify.sh runs from a copy taken now, so editing task/verify.sh does not change the result.
 snap="$(mktemp -d "${TMPDIR:-/tmp}/ds-run.XXXXXX")"; trap 'rm -rf "$snap"' EXIT
@@ -76,17 +118,6 @@ sum="$(snapsum)"
 
 prompt="Do the work described in task/SPEC.md. Only change paths allowed by task/scope.txt. Do not edit anything under task/, except task/notes.md when task/SPEC.md asks for it. Do not commit. When done, list the files you changed."
 [ "$retry" = 1 ] && prompt="$prompt The previous attempt failed acceptance: read task/verify.log and fix the cause. Your earlier changes are still in the working tree."
-
-limit="${DS_TIMEOUT:-900}"
-run_limited() {
-  local t; t="$(command -v timeout || command -v gtimeout || true)"
-  if [ -n "$t" ]; then "$t" "$limit" "$@"; return; fi
-  # macOS has no timeout. Kill the whole process group, or the worker's tools keep writing files.
-  perl -e 'my $t = shift; my $p = fork; die unless defined $p;
-    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
-    $SIG{ALRM} = sub { kill "KILL", -$p; waitpid($p, 0); exit 124 };
-    alarm $t; waitpid($p, 0); exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$limit" "$@"
-}
 
 # </dev/null is required: opencode run waits for stdin EOF and hangs on an open pipe.
 run_limited opencode run --auto -m "$model" "$prompt" > task/exec.log 2>&1 </dev/null

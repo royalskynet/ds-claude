@@ -1,6 +1,6 @@
 ---
 name: ds-claude
-description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencode run（OpenCode Go）執行，由 Claude 預先寫好的驗收腳本以 exit code 判定。要寫程式、改檔、批次修改、補測試、整理大量檔案時使用；也用於「ds-claude」「交給 opencode」「交給 deepseek」。"
+description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencode run（OpenCode Go）執行，由 Claude 預先寫好的驗收腳本以 exit code 判定。要寫程式、改檔、批次修改、補測試、整理大量檔案時使用；要開 Sonnet 或 Haiku 等級的子代理前先載入本 skill，照第 1 節改派；也用於「ds-claude」「交給 opencode」「交給 deepseek」。"
 ---
 
 # ds-claude
@@ -21,6 +21,22 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 | 一條指令或改一行就完成 | Claude 自己做，因為寫規格比動手久 |
 
 同意只算這一張工單，下一張要再問。
+
+### 該派給誰
+
+原本想開小模型子代理的工作，照這張表改派：
+
+| 工作 | 派法 |
+|---|---|
+| 唯讀查詢：找檔案、讀 log、彙整大量檔案、查證（原本給 Haiku 等級） | `ds-run.sh <工作目錄> --ask "問題"`，見第 4 節 |
+| 規格明確的改動：批次修改、補測試、格式轉換、照範本產檔（原本給 Sonnet 等級） | 寫 `task/` 三個檔後跑 `ds-run.sh`，失敗照第 5 節升級 |
+| 跨多檔的設計、找根因、架構取捨 | 留在主模型 |
+| 幾次工具呼叫就做完，或每一步都要看上一步結果的單一鏈 | 不派，主模型直接做 |
+
+兩條守則：
+
+- 任務做到一半不換主模型。要省額度就把工作派出去，不是把主對話降級。
+- 規格明確不代表小模型做得來。驗收失敗就照第 5 節往上升，不反覆重派同一級。
 
 工作量大不是自己做的理由：拆成多張依序派。要讀大量檔案時也派，叫 worker 把結論寫到 `task/notes.md`，Claude 只讀結論。驗收寫不出來時，先拆出寫得出來的部分派工，剩下的 Claude 做。
 
@@ -47,6 +63,9 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 - 檢查行為，不只檢查檔案存在：跑測試、比對輸出。
 - 不用手動先跑：腳本會在派工前跑一次，現在就通過的話會拒絕派工。行為不變的重構才加 `--no-baseline`。
 - 一開頭寫 `set -e`。
+- 否定斷言寫 `if cmd; then exit 1; fi`。單獨一行 `! cmd` 在 `set -e` 下不會讓腳本失敗，派工前檢查會擋下。
+
+派工前腳本會檢查工單大小：`SPEC.md` 超過 40 行，而且 `scope.txt` 超過 2 個 glob，就拒絕派工（`FAIL setup`）。拆成多張依序派。確定要一張做完才加 `--no-lint`。
 
 ## 4. 派工
 
@@ -63,6 +82,16 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄>
 | 2 | `FAIL scope` | 改到範圍外，或 worker 動了 `task/` 的工單檔（已還原） |
 | 3 | `FAIL setup` | 派工前的條件不符，worker 沒有啟動 |
 | 4 | `FAIL worker` | opencode 報錯或逾時，看 `task/exec.log` |
+
+### 唯讀查詢
+
+```bash
+bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --ask "問題"
+```
+
+不用寫 `task/` 三個檔，工作目錄也不必是 git repo。答案寫在 `task/notes.md`，Claude 只讀這個檔。問題要自含：worker 看不到主對話。
+
+結果只有三種：`PASS`（exit 0）、`FAIL scope`（exit 2，worker 改了檔案）、`FAIL worker`（exit 4，報錯、逾時或答案是空的）。改檔檢查靠 `git status` 前後比對，所以工作目錄不是 git repo 時查不到 worker 改檔。答案沒有驗收腳本把關，要拿來下結論的 `路徑:行號` 由 Claude 抽查。
 
 ## 5. 裁決
 
