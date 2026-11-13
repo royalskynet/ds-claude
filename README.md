@@ -127,6 +127,35 @@ Claude moves up one step at a time:
 3. Retry once with pro.
 4. Take over and finish the job itself. To set the worker's changes aside first, it runs `git stash push -u -m ds-claude-rollback`, which can be restored later.
 
+### On/off switch and subagent redirect
+
+`/ds-claude off` turns ds-claude off until `/ds-claude on` (flag file `~/.claude/ds-claude.off`). It is on by default.
+
+`scripts/subagent-redirect.sh` is an optional Claude Code `PreToolUse` hook for `Agent|Task`. While ds-claude is on, it denies a subagent call that its config maps to another executor and tells Claude the command to run instead, so the work does not burn Claude tokens. Out of the box, `model: sonnet` goes to `ds-run.sh` and `model: haiku` goes to `ds-run.sh --ask`. Calls without a model, and the `Explore`, `Plan`, and `statusline-setup` agents, pass.
+
+The executor is your choice, not limited to OpenCode. Put your own map in `~/.config/ds-claude/redirect.json` (or point `DS_REDIRECT_CONFIG` at it), using `scripts/redirect.default.json` as the template:
+
+```json
+{
+  "exempt_types": ["Explore"],
+  "keep_marker": "ds-keep",
+  "hint": "shown after the command",
+  "rules": {
+    "default": {"to": "my queue", "cmd": "myq add <task.md> <cwd>"},
+    "sonnet":  {"to": "my queue", "cmd": "myq add <task.md> <cwd>"},
+    "haiku":   {"to": "free tier", "cmd": "myq add --free <task.md> <cwd>"}
+  }
+}
+```
+
+`rules` keys are model names; `default` matches a call with no model. `{skill}` in `cmd` expands to the skill directory. A prompt that contains `keep_marker` passes, for work with secrets or work that needs the current session's context. No `jq` or a broken config means every call passes.
+
+Install the hook in `~/.claude/settings.json`:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Agent|Task", "hooks": [{"type": "command", "command": "bash ~/.claude/skills/ds-claude/scripts/subagent-redirect.sh"}]}]}}
+```
+
 ## What the script changes on your machine
 
 - It adds `task/` to `.git/info/exclude`, so logs stay out of your diffs.
@@ -172,7 +201,7 @@ Claude moves up one step at a time:
 bash tests/test.sh
 ```
 
-The tests run offline with a stub `opencode`.
+The tests run offline with a stub `opencode`. The switch and the hook have their own checks: `bash skills/ds-claude/scripts/ds-toggle-test.sh` and `bash skills/ds-claude/scripts/subagent-redirect-test.sh`.
 
 ## Related
 

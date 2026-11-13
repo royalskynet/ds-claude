@@ -9,6 +9,14 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 預設派工。Claude 的手只用在四件事：讀懂需求、寫 `task/` 三個檔、看結果摘要、裁決。
 
+## 0. 開關（`/ds-claude on|off|status`）
+
+參數是 `on`、`off`、`status` 時，只跑 `bash <本 skill 目錄>/scripts/ds-toggle.sh <參數>`，把最後一行回報給使用者就結束，不派工。
+
+- `off`：建旗標 `~/.claude/ds-claude.off`，路由注入改成「Claude 自己動手」。跨 session 持續有效，直到 `on`。
+- 旗標存在時，本 skill 不當預設：實作由 Claude 自己做。只有使用者在那則訊息明確點名 ds-claude、opencode 或 deepseek，才照下面流程派工。
+- 有掛 `scripts/subagent-redirect.sh` hook 時，開著的 ds-claude 會擋下設定檔對應的子代理呼叫，並在拒絕訊息附上改跑的指令，照那條指令派。對照表在 `~/.config/ds-claude/redirect.json`，沒有就用 `scripts/redirect.default.json`。執行人可換成任何 CLI。要留 Claude 子代理的，prompt 加 `ds-keep`。
+
 ## 1. 分流
 
 預設全部派，只有下列情況例外：

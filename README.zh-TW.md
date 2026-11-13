@@ -126,6 +126,35 @@ Claude 一次升一級：
 3. 用 pro 重做一次。
 4. Claude 接手完成。要先收起 worker 的改動時，執行 `git stash push -u -m ds-claude-rollback`，之後還拿得回來。
 
+### 開關與子代理轉派
+
+`/ds-claude off` 關掉 ds-claude，直到 `/ds-claude on`（旗標檔 `~/.claude/ds-claude.off`）。預設開。
+
+`scripts/subagent-redirect.sh` 是選用的 Claude Code `PreToolUse` hook，對 `Agent|Task` 生效。ds-claude 開著時，設定檔有對應的子代理呼叫會被擋下，並告訴 Claude 改跑哪條指令，工作就不耗 Claude token。預設 `model: sonnet` 轉 `ds-run.sh`、`model: haiku` 轉 `ds-run.sh --ask`；沒寫 model 的呼叫，以及 `Explore`、`Plan`、`statusline-setup` 代理放行。
+
+執行人自己選，不限 OpenCode。把對照表寫在 `~/.config/ds-claude/redirect.json`（或用 `DS_REDIRECT_CONFIG` 指定），範本是 `scripts/redirect.default.json`：
+
+```json
+{
+  "exempt_types": ["Explore"],
+  "keep_marker": "ds-keep",
+  "hint": "接在指令後面的提示",
+  "rules": {
+    "default": {"to": "my queue", "cmd": "myq add <task.md> <cwd>"},
+    "sonnet":  {"to": "my queue", "cmd": "myq add <task.md> <cwd>"},
+    "haiku":   {"to": "free tier", "cmd": "myq add --free <task.md> <cwd>"}
+  }
+}
+```
+
+`rules` 的鍵是模型名，`default` 對應沒寫 model 的呼叫。`cmd` 裡的 `{skill}` 會換成 skill 目錄。prompt 含 `keep_marker` 就放行，給含機密或需要當前 session 上下文的工作用。沒有 `jq` 或設定檔壞掉時一律放行。
+
+在 `~/.claude/settings.json` 掛上 hook：
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Agent|Task", "hooks": [{"type": "command", "command": "bash ~/.claude/skills/ds-claude/scripts/subagent-redirect.sh"}]}]}}
+```
+
 ## 腳本會動到你電腦上的什麼
 
 - 把 `task/` 加進 `.git/info/exclude`，讓 log 不出現在 diff 裡。
@@ -171,7 +200,7 @@ Claude 一次升一級：
 bash tests/test.sh
 ```
 
-測試不連網，用假的 `opencode` 代替。
+測試不連網，用假的 `opencode` 代替。開關與 hook 各有檢查：`bash skills/ds-claude/scripts/ds-toggle-test.sh`、`bash skills/ds-claude/scripts/subagent-redirect-test.sh`。
 
 ## 相關專案
 

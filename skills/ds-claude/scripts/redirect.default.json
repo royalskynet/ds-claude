@@ -1,0 +1,9 @@
+{
+  "exempt_types": ["Explore", "Plan", "statusline-setup"],
+  "keep_marker": "ds-keep",
+  "hint": "Write the order with a failing acceptance check, then read only the result. Add ds-keep to the prompt to keep a Claude subagent (secrets, private data, needs this session's context). /ds-claude off turns this off.",
+  "rules": {
+    "sonnet": {"to": "ds-claude worker", "cmd": "bash {skill}/scripts/ds-run.sh <workdir>"},
+    "haiku": {"to": "ds-claude read-only", "cmd": "bash {skill}/scripts/ds-run.sh <workdir> --ask \"question\""}
+  }
+}
