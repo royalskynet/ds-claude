@@ -9,6 +9,13 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 預設派工。Claude 的手只用在四件事：讀懂需求、寫 `task/` 三個檔、看結果摘要、裁決。
 
+## 0. 開關（`/ds-claude on|off|status`）
+
+參數是 `on`、`off`、`status` 時，只跑 `bash <本 skill 目錄>/scripts/ds-toggle.sh <參數>`，把最後一行回報給使用者就結束，不派工。
+
+- `off`：建旗標 `~/.claude/ds-claude.off`，路由注入改成「Claude 自己動手」。跨 session 持續有效，直到 `on`。
+- 旗標存在時，本 skill 不當預設：實作由 Claude 自己做。只有使用者在那則訊息明確點名 ds-claude、opencode 或 deepseek，才照下面流程派工。
+
 ## 1. 分流
 
 預設全部派，只有下列情況例外：
@@ -37,6 +44,7 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 - 任務做到一半不換主模型。要省額度就把工作派出去，不是把主對話降級。
 - 規格明確不代表小模型做得來。驗收失敗就照第 5 節往上升，不反覆重派同一級。
+- **Sonnet 等級的子代理一律改派 DeepSeek，且 lint 全開**：不開 Sonnet 子代理（`Plan`、`novel` 這類 agent 檔寫死 `model: sonnet` 的也不要 spawn）。能寫出驗收的活走 `ds-run.sh`，預設就帶工單 lint（`verify.sh` 的裸 `! cmd`、工單過大都會 `FAIL setup`）。**不加 `--no-lint`**，除非使用者在該則訊息明講；工單被 lint 擋下就拆單，不繞過。寫不出驗收的（規劃、寫作）留主模型，不降級給 Sonnet。
 
 工作量大不是自己做的理由：拆成多張依序派。要讀大量檔案時也派，叫 worker 把結論寫到 `task/notes.md`，Claude 只讀結論。驗收寫不出來時，先拆出寫得出來的部分派工，剩下的 Claude 做。
 
