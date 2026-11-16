@@ -70,7 +70,10 @@ if [ "$ladder" = 1 ]; then
   lout="$(bash "$0" "${rargs[@]+"${rargs[@]}"}" </dev/null)"
   lrc=$?
   lline="$(printf '%s\n' "$lout" | tail -1)"
-  [ "$lrc" -eq 0 ] && finish 0 "$wline | attempts $attempt | review APPROVE"
+  if [ "$lrc" -eq 0 ]; then
+    case "$lline" in "PASS review: SKIP"*) rword=SKIP ;; *) rword=APPROVE ;; esac
+    finish 0 "$wline | attempts $attempt | review $rword"
+  fi
   finish "$lrc" "$lline"
 fi
 
@@ -122,15 +125,47 @@ if [ "$review" = 1 ]; then
   # --path keeps the diff to these pathspecs; without it the whole repo is reviewed.
   if [ "${#paths[@]}" -gt 0 ]; then scope=(-- "${paths[@]}"); else scope=(-- .); fi
   if [ -n "$(gitst "${scope[@]}")" ]; then
-    git diff HEAD "${scope[@]}" ':(exclude)task' > task/review.diff
+    git diff -M HEAD "${scope[@]}" ':(exclude)task' > task/review.diff
     git -c core.quotePath=false ls-files -o --exclude-standard "${scope[@]}" | grep -v '^task/' | while IFS= read -r f; do
       [ -n "$f" ] || continue
       git diff --no-index /dev/null "$f" >> task/review.diff || true
     done
   else
-    git log -p HEAD --not --remotes "${scope[@]}" > task/review.diff
+    git log -p -M HEAD --not --remotes "${scope[@]}" > task/review.diff
   fi
   [ -s task/review.diff ] || setup_fail "nothing to review"
+
+  record() { # <verdict> <reason>
+    local recorder
+    if [ -n "${DS_REVIEW_RECORD:-}" ]; then
+      recorder="$DS_REVIEW_RECORD"
+    else
+      recorder="${XDG_CONFIG_HOME:-$HOME/.config}/ds-claude/on-review"
+      [ -x "$recorder" ] || return 0
+    fi
+    "$recorder" "$(cd "$(git rev-parse --show-toplevel)" && pwd -P)" "$1" "$2"
+  }
+
+  # Docs-only and small changes skip the model, as most review bots do.
+  # The skip is recorded as APPROVE. DS_REVIEW_MIN_LINES=0 reviews everything.
+  min="${DS_REVIEW_MIN_LINES:-10}"; why=""
+  case "$min" in ''|*[!0-9]*) setup_fail "DS_REVIEW_MIN_LINES must be a number" ;; esac
+  # Binary, rename and mode changes carry no +/- lines, so they never count as small or as docs.
+  if [ "$min" -gt 0 ] && ! grep -qE '^(Binary files |GIT binary patch|old mode |new mode |rename from |copy from |similarity index )' task/review.diff; then
+    files="$(grep '^diff --git ' task/review.diff | sed 's/^diff --git a\/.* b\///')"
+    # Count +/- lines inside hunks only, so file headers never count and content that looks like one does.
+    lines="$(awk '/^diff --git /{h=1;next} /^@@/{h=0;next} !h&&/^[+-]/{c++} END{print c+0}' task/review.diff)"
+    if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qivE '\.(md|markdown|rst|adoc)$'; then
+      why="docs only"
+    elif [ "$lines" -gt 0 ] && [ "$lines" -lt "$min" ]; then
+      why="$lines changed lines, under $min"
+    fi
+  fi
+  if [ -n "$why" ]; then
+    record APPROVE "review skipped: $why" || finish 4 "FAIL worker: review record failed"
+    printf '%s\t%s\t%s\t%s\t0\n' "$(date +%F)" "review" "none" "skip" >> task/dispatch-log.tsv
+    finish 0 "PASS review: SKIP, $why"
+  fi
 
   rmodel=""
   [ "$model_flag" = 1 ] && rmodel="$model"
@@ -155,16 +190,7 @@ if [ "$review" = 1 ]; then
   [ -n "$verdict" ] || { reviewlog worker; finish 4 "FAIL worker: no verdict"; }
   reason="$(grep -F 'REASON:' task/review.md | tail -1 | sed -E 's/^.*REASON:[[:space:]]*//' | cut -c1-200)"
 
-  if [ -n "${DS_REVIEW_RECORD:-}" ]; then
-    recorder="$DS_REVIEW_RECORD"
-  else
-    recorder="${XDG_CONFIG_HOME:-$HOME/.config}/ds-claude/on-review"
-    [ -x "$recorder" ] || recorder=""
-  fi
-  if [ -n "$recorder" ]; then
-    repo_abs="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"
-    "$recorder" "$repo_abs" "$verdict" "$reason" || { reviewlog worker; finish 4 "FAIL worker: review record failed"; }
-  fi
+  record "$verdict" "$reason" || { reviewlog worker; finish 4 "FAIL worker: review record failed"; }
 
   if [ "$verdict" = APPROVE ]; then reviewlog approve; else reviewlog reject; fi
   [ "$verdict" = APPROVE ] && finish 0 "PASS review: APPROVE, model $rmodel"

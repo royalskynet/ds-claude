@@ -99,6 +99,7 @@ bash skills/ds-claude/scripts/ds-run.sh <workdir>
 | `DS_MODEL` | newest flash | Same as `--model` |
 | `DS_REVIEW_MODEL` | newest `opencode-go/glm-*-flash` | Reviewer model |
 | `DS_REVIEW` | `1` | `0` skips the review in `--ladder` |
+| `DS_REVIEW_MIN_LINES` | `10` | Changes under this many lines, and docs-only changes (`.md`, `.rst`, `.adoc`), skip the reviewer model and count as approved. `0` reviews everything |
 | `DS_REVIEW_RECORD` | `~/.config/ds-claude/on-review` if executable | Command called with `<repo> <verdict> <reason>` after each review |
 
 ### Results

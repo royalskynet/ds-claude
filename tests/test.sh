@@ -129,6 +129,8 @@ repo; mkdir sub; check_dir="$tmp/r/sub"; n=$((n+1))
 if FAKE_MODE=good bash "$run" "$check_dir" >/dev/null 2>&1; [ $? = 3 ]; then echo "ok   subdirectory refused"; else echo "FAIL subdirectory refused"; fails=$((fails+1)); fi
 
 # --- --review (read-only reviewer) ---
+# The fixtures change one line, so the size skip is off until its own section.
+export DS_REVIEW_MIN_LINES=0
 export FAKE_REVIEW=approve
 repo; echo ok > src/a.txt; check "review: approve" 0 good --review
 expect "review: picks the newest glm flash" grep -q -- '-m opencode-go/glm-5.3-flash' "$FAKE_ARGS"
@@ -229,6 +231,35 @@ check "ladder: DS_REVIEW=0 skips review" 0 good --ladder
 expect "ladder: still says attempts 1" grep -q 'attempts 1' "$tmp/out"
 n=$((n+1)); if [ "$(reviews)" = 0 ] && ! grep -q 'review' "$tmp/out"; then echo "ok   ladder: review skipped"; else echo "FAIL ladder: review not skipped"; fails=$((fails+1)); fi
 unset DS_REVIEW
+
+# --- review skip: docs-only and small changes ---
+unset DS_REVIEW_MIN_LINES; export FAKE_REVIEW=reject
+export DS_REVIEW_RECORD="$tmp/rec.sh" REC_OUT="$tmp/skip.out"
+repo; echo ok > src/a.txt; check "skip: small change" 0 good --review
+expect "skip: line says SKIP and the size" grep -q 'PASS review: SKIP, 1 changed lines, under 10' "$tmp/out"
+expect "skip: no model call" test "$(reviews)" = 0
+expect "skip: recorded as APPROVE" grep -q '|APPROVE|review skipped: 1 changed lines' "$tmp/skip.out"
+expect "skip: logged" grep -q 'review.*skip' task/dispatch-log.tsv
+repo; seq 1 9 > src/a.txt; check "skip: 9 lines" 0 good --review
+repo; seq 1 10 > src/a.txt; check "skip: 10 lines are reviewed" 5 good --review
+expect "skip: 10 lines call the model" test "$(reviews)" = 1
+repo; seq 1 40 > NOTES.md; mkdir docs; seq 1 40 > docs/guide.RST; check "skip: docs only" 0 good --review
+expect "skip: line says docs only" grep -q 'PASS review: SKIP, docs only' "$tmp/out"
+repo; seq 1 40 > NOTES.md; seq 1 3 > src/a.txt; check "skip: docs plus code is reviewed" 5 good --review
+repo; seq 1 40 > requirements.txt; check "skip: .txt is not a doc" 5 good --review
+repo; printf -- '-- a\n++ b\n' > src/keep.txt; seq 1 8 >> src/keep.txt; check "skip: added and removed lines both count" 5 good --review
+repo; printf '\0\1\2' > src/b.bin; check "skip: binary file is reviewed" 5 good --review
+repo; git mv src/keep.txt src/moved.txt; check "skip: rename is reviewed" 5 good --review
+repo; git mv src/keep.txt src/keep.md; check "skip: rename to .md is reviewed" 5 good --review
+repo; chmod +x src/keep.txt; check "skip: mode change is reviewed" 5 good --review
+repo; printf -- '-- a/x\n++ b/x\n' > src/keep.txt; git add -A; git commit -qm hdr; seq 1 8 > src/keep.txt
+check "skip: content that looks like a header counts" 5 good --review
+repo; echo ok > src/a.txt; export DS_REVIEW_MIN_LINES=0; check "skip: MIN_LINES=0 reviews everything" 5 good --review
+export DS_REVIEW_MIN_LINES=x; check "skip: bad MIN_LINES refused" 3 good --review
+unset DS_REVIEW_MIN_LINES
+repo; check "skip: ladder" 0 good --ladder
+expect "skip: ladder says review SKIP" grep -Eq '^PASS: .* \| attempts 1 \| review SKIP$' "$tmp/out"
+unset DS_REVIEW_RECORD REC_OUT FAKE_REVIEW
 
 echo "$((n-fails))/$n passed"
 [ "$fails" = 0 ]

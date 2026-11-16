@@ -113,6 +113,8 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --review [--model m] [-
 
 叫另一家模型唯讀審這次的改動，不花 Claude 額度。它讀工單與 `task/review.diff`，判斷改動是解決問題還是只讓驗收通過，最後回 `APPROVE` 或 `REJECT`。審查模型預設選最新的 glm flash（`DS_REVIEW_MODEL` 或 `--model` 可改），不和動手的 DeepSeek 同一家，單次花費約是旗艦模型的二十分之一。沒有 `task/` 三個檔的改動用 `--spec` 指定工單檔。repo 裡有不該送給審查模型的未追蹤檔，或只想審一部分時，用 `--path <路徑>` 限定（可重複），diff 只含這些路徑內的改動。
 
+純文件改動（只動 `.md`／`.rst`／`.adoc`）與少於 10 行的改動不叫模型，直接印 `PASS review: SKIP, <原因>`，並登記成 APPROVE。這是多數審查機器人的做法，省下的是最常見的那批小單。行數門檻用 `DS_REVIEW_MIN_LINES` 改；改動碰錢、資安、權限或不可逆操作時設 `DS_REVIEW_MIN_LINES=0`，再小也審。
+
 要把裁決交給別的程式（例如 commit 前的檢查），設 `DS_REVIEW_RECORD=<指令>`，或放一個可執行檔在 `~/.config/ds-claude/on-review`。腳本會用 `<repo 絕對路徑> <裁決> <理由>` 呼叫它。
 
 ### 唯讀查詢
