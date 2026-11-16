@@ -91,13 +91,13 @@ bash skills/ds-claude/scripts/ds-run.sh <workdir>
 | `--no-baseline` | Skip the "must fail first" check. Use it for refactors that keep behavior |
 | `--model <provider/model>` | Use a specific model |
 | `--ladder` | Retry inside the script: same model once, then pro once (3 attempts at most). After a pass, run `--review`. Prints one line |
-| `--review` | Review only. A model from another vendor reads the order and the diff, read-only, and answers `APPROVE` or `REJECT`. Add `--spec <file>` when there is no `task/` order |
+| `--review` | Review only. A model from another vendor reads the order and the diff, read-only, and answers `APPROVE` or `REJECT`. Add `--spec <file>` when there is no `task/` order, and `--path <pathspec>` (repeatable) to review only those paths |
 
 | Environment variable | Default | Effect |
 |---|---|---|
 | `DS_TIMEOUT` | `900` | Worker time limit in seconds |
 | `DS_MODEL` | newest flash | Same as `--model` |
-| `DS_REVIEW_MODEL` | newest `opencode-go/kimi-k*` | Reviewer model |
+| `DS_REVIEW_MODEL` | newest `opencode-go/glm-*-flash` | Reviewer model |
 | `DS_REVIEW` | `1` | `0` skips the review in `--ladder` |
 | `DS_REVIEW_RECORD` | `~/.config/ds-claude/on-review` if executable | Command called with `<repo> <verdict> <reason>` after each review |
 

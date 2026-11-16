@@ -8,7 +8,7 @@ mkdir "$tmp/bin"
 cat > "$tmp/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
 if [ "$1" = models ]; then
-  printf '%s\n' opencode-go/deepseek-v4-pro opencode-go/deepseek-v4.1-flash opencode-go/deepseek-v4.9-flash opencode-go/glm-5.3-flash opencode-go/kimi-k2.7-code opencode-go/kimi-k3
+  printf '%s\n' opencode-go/deepseek-v4-pro opencode-go/deepseek-v4.1-flash opencode-go/deepseek-v4.9-flash opencode-go/glm-5.2-flash opencode-go/glm-5.3-flash opencode-go/glm-5.3 opencode-go/kimi-k2.7-code opencode-go/kimi-k3
   exit 0
 fi
 echo "args: $*" >> "$FAKE_ARGS"
@@ -131,7 +131,7 @@ if FAKE_MODE=good bash "$run" "$check_dir" >/dev/null 2>&1; [ $? = 3 ]; then ech
 # --- --review (read-only reviewer) ---
 export FAKE_REVIEW=approve
 repo; echo ok > src/a.txt; check "review: approve" 0 good --review
-expect "review: picks the newest kimi" grep -q 'opencode-go/kimi-k3' "$FAKE_ARGS"
+expect "review: picks the newest glm flash" grep -q -- '-m opencode-go/glm-5.3-flash' "$FAKE_ARGS"
 expect "review: logs approve" grep -q 'review.*approve' task/dispatch-log.tsv
 expect "review: diff includes the untracked file" grep -q 'src/a.txt' task/review.diff
 expect "review: runs --pure" grep -q -- '--pure' "$FAKE_ARGS"
@@ -171,6 +171,29 @@ repo; echo ok > src/a.txt; export DS_REVIEW_RECORD="$tmp/rec.sh" REC_OUT="$tmp/r
 check "review: record hook" 0 good --review
 expect "review: record got repo, verdict, reason" grep -q '|APPROVE|ok' "$tmp/rec.out"
 unset DS_REVIEW_RECORD REC_OUT
+
+# --path narrows the review diff
+absent() { n=$((n+1)); if grep -q "$2" task/review.diff; then echo "FAIL $1"; fails=$((fails+1)); else echo "ok   $1"; fi; }
+repo; echo ok > src/a.txt; mkdir "junk dir"; echo MARKJUNK > "junk dir/s.txt"; echo MARKOTHER > other.txt
+check "review: --path" 0 good --review --path src
+expect "review: --path keeps the path" grep -q 'src/a.txt' task/review.diff
+absent "review: --path drops other paths" 'MARKJUNK\|MARKOTHER'
+check "review: --path twice, with a space" 0 good --review --path "junk dir" --path other.txt
+expect "review: both paths kept" grep -q 'MARKJUNK' task/review.diff
+expect "review: second path kept" grep -q 'MARKOTHER' task/review.diff
+absent "review: --path twice drops src" 'src/a.txt'
+check "review: no --path reviews everything" 0 good --review
+expect "review: no --path has the junk file" grep -q 'MARKJUNK' task/review.diff
+repo; echo MARKOTHER > other.txt; check "review: --path with nothing inside" 3 good --review --path nowhere
+repo; echo MARKONE > src/a.txt; echo MARKTWO > other.txt; git add -A; git commit -qm more
+check "review: --path on unpushed commits" 0 good --review --path other.txt
+expect "review: --path keeps its part of the log" grep -q 'MARKTWO' task/review.diff
+absent "review: --path drops the rest of the log" 'MARKONE'
+# The worker needs a clean tree, so the path here holds an unpushed commit instead.
+repo; mkdir "junk dir"; echo MARKJUNK > "junk dir/s.txt"; git add -A; git commit -qm junk
+check "ladder: --path reaches the review" 0 good --ladder --path "junk dir"
+expect "ladder: --path keeps its path" grep -q 'MARKJUNK' task/review.diff
+absent "ladder: --path drops the worker's file" 'src/a.txt'
 
 # --- --ladder (dispatch + escalate + review) ---
 repo; check "ladder: one attempt passes" 0 good --ladder

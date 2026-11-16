@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run one DeepSeek work order through opencode, then judge it by task/verify.sh.
 # Usage: ds-run.sh <workdir> [--retry] [--pro] [--no-baseline] [--no-lint] [--model provider/model] [--ask "question"]
-#        ds-run.sh <workdir> --review [--model provider/model] [--spec <file>]...
+#        ds-run.sh <workdir> --review [--model provider/model] [--spec <file>]... [--path <pathspec>]...
 #        ds-run.sh <workdir> --ladder [other flags]
 # Exit:  0 PASS | 1 verify failed | 2 out of scope or task/ tampered | 3 setup | 4 worker error | 5 review rejected
 set -uo pipefail
@@ -13,13 +13,14 @@ setup_fail() { finish 3 "FAIL setup: $1"; }
 
 orig_args=("$@")
 dir=""; retry=0; baseline=1; lint=1; tier=flash; model="${DS_MODEL:-}"; ask=""
-review=0; ladder=0; model_flag=0; specs=()
+review=0; ladder=0; model_flag=0; specs=(); paths=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --retry) retry=1 ;;
     --review) review=1 ;;
     --ladder) ladder=1 ;;
     --spec) [ $# -ge 2 ] || setup_fail "--spec needs a path"; specs+=("$2"); shift ;;
+    --path) [ $# -ge 2 ] || setup_fail "--path needs a pathspec"; paths+=("$2"); shift ;;
     --pro) tier=pro ;;
     --no-baseline) baseline=0 ;;
     --no-lint) lint=0 ;;
@@ -36,9 +37,12 @@ command -v opencode >/dev/null || setup_fail "opencode not found"
 
 # --ladder only re-invokes this script with its own flags, so it needs no model of its own.
 if [ "$ladder" = 1 ]; then
-  largs=()
+  # --path only narrows the review, so the worker runs never see it.
+  largs=(); skip=0
   for a in "${orig_args[@]+"${orig_args[@]}"}"; do
-    [ "$a" = "--ladder" ] || largs+=("$a")
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$a" in --ladder) continue ;; --path) skip=1; continue ;; esac
+    largs+=("$a")
   done
   attempt=0; lrc=0; lline=""
   while [ "$attempt" -lt 3 ]; do
@@ -62,6 +66,7 @@ if [ "$ladder" = 1 ]; then
   rargs=("$dir" --review)
   [ "$model_flag" = 1 ] && rargs+=(--model "$model")
   for s in "${specs[@]+"${specs[@]}"}"; do rargs+=(--spec "$s"); done
+  for s in "${paths[@]+"${paths[@]}"}"; do rargs+=(--path "$s"); done
   lout="$(bash "$0" "${rargs[@]+"${rargs[@]}"}" </dev/null)"
   lrc=$?
   lline="$(printf '%s\n' "$lout" | tail -1)"
@@ -113,15 +118,17 @@ if [ "$review" = 1 ]; then
     spec_list="task/SPEC.md task/scope.txt task/verify.sh"
   fi
   # task/ holds the logs, so it never counts as a change.
-  gitst() { git -c core.quotePath=false status --porcelain 2>/dev/null | grep -vE '^.. task/' || true; }
-  if [ -n "$(gitst)" ]; then
-    git diff HEAD -- . ':(exclude)task' > task/review.diff
-    git -c core.quotePath=false ls-files -o --exclude-standard | grep -v '^task/' | while IFS= read -r f; do
+  gitst() { git -c core.quotePath=false status --porcelain "$@" 2>/dev/null | grep -vE '^.. task/' || true; }
+  # --path keeps the diff to these pathspecs; without it the whole repo is reviewed.
+  if [ "${#paths[@]}" -gt 0 ]; then scope=(-- "${paths[@]}"); else scope=(-- .); fi
+  if [ -n "$(gitst "${scope[@]}")" ]; then
+    git diff HEAD "${scope[@]}" ':(exclude)task' > task/review.diff
+    git -c core.quotePath=false ls-files -o --exclude-standard "${scope[@]}" | grep -v '^task/' | while IFS= read -r f; do
       [ -n "$f" ] || continue
       git diff --no-index /dev/null "$f" >> task/review.diff || true
     done
   else
-    git log -p HEAD --not --remotes > task/review.diff
+    git log -p HEAD --not --remotes "${scope[@]}" > task/review.diff
   fi
   [ -s task/review.diff ] || setup_fail "nothing to review"
 
@@ -129,8 +136,8 @@ if [ "$review" = 1 ]; then
   [ "$model_flag" = 1 ] && rmodel="$model"
   [ -n "$rmodel" ] || rmodel="${DS_REVIEW_MODEL:-}"
   if [ -z "$rmodel" ]; then
-    rmodel="$(opencode models 2>/dev/null </dev/null | grep -E '^opencode-go/kimi-k[0-9.]+$' | sort -V | tail -1)"
-    [ -n "$rmodel" ] || setup_fail "no opencode-go kimi review model; pass --model or set DS_REVIEW_MODEL"
+    rmodel="$(opencode models 2>/dev/null </dev/null | grep -E '^opencode-go/glm-[0-9.]+-flash$' | sort -V | tail -1)"
+    [ -n "$rmodel" ] || setup_fail "no opencode-go glm flash review model; pass --model or set DS_REVIEW_MODEL"
   fi
 
   reviewlog() { printf '%s\t%s\t%s\t%s\t0\n' "$(date +%F)" "review" "$rmodel" "$1" >> task/dispatch-log.tsv; }
