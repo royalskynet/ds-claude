@@ -8,12 +8,26 @@ mkdir "$tmp/bin"
 cat > "$tmp/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
 if [ "$1" = models ]; then
-  printf '%s\n' opencode-go/deepseek-v4-pro opencode-go/deepseek-v4.1-flash opencode-go/deepseek-v4.9-flash opencode-go/glm-5.3-flash
+  printf '%s\n' opencode-go/deepseek-v4-pro opencode-go/deepseek-v4.1-flash opencode-go/deepseek-v4.9-flash opencode-go/glm-5.3-flash opencode-go/kimi-k2.7-code opencode-go/kimi-k3
   exit 0
 fi
 echo "args: $*" >> "$FAKE_ARGS"
-case "$FAKE_MODE" in
+case " $* " in
+  *" --agent plan "*)
+    case "${FAKE_REVIEW:-}" in
+      approve) printf 'looks fine\nREASON: ok\nVERDICT: APPROVE\n'; exit 0 ;;
+      reject)  printf 'src/a.txt:1 bad\nREASON: hardcoded expected value\nVERDICT: REJECT\n'; exit 0 ;;
+      silent)  echo "no decision"; exit 0 ;;
+      write)   echo x > src/sneak.txt; printf 'VERDICT: APPROVE\n'; exit 0 ;;
+    esac ;;
+esac
+mode="$FAKE_MODE"
+if [ -s "${FAKE_SEQ:-/dev/null}" ]; then
+  mode="$(sed -n 1p "$FAKE_SEQ")"; sed -i.bak 1d "$FAKE_SEQ"
+fi
+case "$mode" in
   good)    echo ok > src/a.txt ;;
+  bad)     echo no > src/a.txt ;;
   nothing) : ;;
   outside) echo ok > src/a.txt; echo x > other.txt ;;
   tamper)  printf 'exit 0\n' > task/verify.sh ;;
@@ -33,6 +47,7 @@ esac
 STUB
 chmod +x "$tmp/bin/opencode"
 export PATH="$tmp/bin:$PATH" FAKE_ARGS="$tmp/args"
+unset DS_MODEL DS_REVIEW_MODEL DS_REVIEW DS_REVIEW_RECORD
 fails=0; n=0
 
 repo() {
@@ -53,6 +68,8 @@ expect() { # name command...
   local name="$1"; shift; n=$((n+1))
   if "$@"; then echo "ok   $name"; else echo "FAIL $name"; fails=$((fails+1)); fi
 }
+workers() { grep -vc -- '--agent plan' "$FAKE_ARGS" 2>/dev/null || true; }
+reviews() { grep -c -- '--agent plan' "$FAKE_ARGS" 2>/dev/null || true; }
 
 repo; check "pass" 0 good
 expect "picks newest flash" grep -q 'deepseek-v4.9-flash' "$FAKE_ARGS"
@@ -110,6 +127,85 @@ repo; check "ask: empty answer refused" 4 nothing --ask "q"
 expect "ask: failure logged" grep -q "ask: q.*worker" task/dispatch-log.tsv
 repo; mkdir sub; check_dir="$tmp/r/sub"; n=$((n+1))
 if FAKE_MODE=good bash "$run" "$check_dir" >/dev/null 2>&1; [ $? = 3 ]; then echo "ok   subdirectory refused"; else echo "FAIL subdirectory refused"; fails=$((fails+1)); fi
+
+# --- --review (read-only reviewer) ---
+export FAKE_REVIEW=approve
+repo; echo ok > src/a.txt; check "review: approve" 0 good --review
+expect "review: picks the newest kimi" grep -q 'opencode-go/kimi-k3' "$FAKE_ARGS"
+expect "review: logs approve" grep -q 'review.*approve' task/dispatch-log.tsv
+expect "review: diff includes the untracked file" grep -q 'src/a.txt' task/review.diff
+expect "review: runs --pure" grep -q -- '--pure' "$FAKE_ARGS"
+expect "review: uses the plan agent" grep -q -- '--agent plan' "$FAKE_ARGS"
+
+export FAKE_REVIEW=reject
+repo; echo ok > src/a.txt; check "review: reject" 5 good --review
+expect "review: reject reason in the line" grep -q 'hardcoded expected value' "$tmp/out"
+
+export FAKE_REVIEW=silent
+repo; echo ok > src/a.txt; check "review: no verdict" 4 good --review
+expect "review: no verdict says so" grep -q 'no verdict' "$tmp/out"
+
+export FAKE_REVIEW=write
+repo; echo ok > src/a.txt; check "review: writer caught" 2 good --review
+
+export FAKE_REVIEW=approve
+repo; echo ok > src/a.txt; rm -rf task; check "review: missing work order" 3 good --review
+repo; mkdir sub; echo ok > src/a.txt; n=$((n+1))
+if bash "$run" "$tmp/r/sub" --review >/dev/null 2>&1; [ $? = 3 ]; then echo "ok   review: subdirectory refused"; else echo "FAIL review subdirectory refused"; fails=$((fails+1)); fi
+repo; echo ok > src/a.txt; echo '# other order' > "$tmp/order.md"
+check "review: --spec and --model" 0 good --review --spec "$tmp/order.md" --model x/custom
+expect "review: --spec path reaches the prompt" grep -q "$tmp/order.md" "$FAKE_ARGS"
+expect "review: --model used" grep -q 'x/custom' "$FAKE_ARGS"
+
+repo; echo ok > src/a.txt; export DS_REVIEW_MODEL=opencode-go/kimi-env
+check "review: DS_REVIEW_MODEL used" 0 good --review
+expect "review: env model reaches opencode" grep -q 'kimi-env' "$FAKE_ARGS"
+unset DS_REVIEW_MODEL
+
+cat > "$tmp/rec.sh" <<'REC'
+#!/usr/bin/env bash
+printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$REC_OUT"
+REC
+chmod +x "$tmp/rec.sh"
+repo; echo ok > src/a.txt; export DS_REVIEW_RECORD="$tmp/rec.sh" REC_OUT="$tmp/rec.out"
+check "review: record hook" 0 good --review
+expect "review: record got repo, verdict, reason" grep -q '|APPROVE|ok' "$tmp/rec.out"
+unset DS_REVIEW_RECORD REC_OUT
+
+# --- --ladder (dispatch + escalate + review) ---
+repo; check "ladder: one attempt passes" 0 good --ladder
+expect "ladder: says attempts 1" grep -q 'attempts 1' "$tmp/out"
+expect "ladder: appends review APPROVE" grep -q 'review APPROVE' "$tmp/out"
+expect "ladder: keeps the worker PASS line" grep -Eq '^PASS: [0-9]+ files changed.* \| attempts 1 \| review APPROVE$' "$tmp/out"
+n=$((n+1)); if [ "$(workers)" = 1 ] && [ "$(reviews)" = 1 ]; then echo "ok   ladder: one worker, one review"; else echo "FAIL ladder call counts"; fails=$((fails+1)); fi
+
+repo; check "ladder: quoted model kept whole" 0 good --ladder --model "x/my model"
+expect "ladder: does not split a quoted --model" grep -q -- '-m x/my model ' "$FAKE_ARGS"
+
+repo; printf 'bad\ngood\n' > "$tmp/seq"; export FAKE_SEQ="$tmp/seq"
+check "ladder: retries after a verify failure" 0 good --ladder
+expect "ladder: says attempts 2" grep -q 'attempts 2' "$tmp/out"
+unset FAKE_SEQ
+
+repo; printf 'bad\nbad\ngood\n' > "$tmp/seq"; export FAKE_SEQ="$tmp/seq"
+check "ladder: third attempt succeeds" 0 good --ladder
+n=$((n+1)); if grep -v -- '--agent plan' "$FAKE_ARGS" | sed -n 3p | grep -q 'deepseek-v4-pro'; then echo "ok   ladder: final attempt uses pro"; else echo "FAIL ladder: final attempt must use pro"; fails=$((fails+1)); fi
+unset FAKE_SEQ
+
+repo; printf 'bad\nbad\nbad\n' > "$tmp/seq"; export FAKE_SEQ="$tmp/seq"
+check "ladder: exhausts three attempts" 1 good --ladder
+expect "ladder: exhaust reports verify failure" grep -q 'FAIL verify' "$tmp/out"
+n=$((n+1)); if [ "$(workers)" = 3 ] && [ "$(reviews)" = 0 ]; then echo "ok   ladder: exhaust runs no review"; else echo "FAIL ladder exhaust call counts"; fails=$((fails+1)); fi
+unset FAKE_SEQ
+
+repo; check "ladder: scope failure stops" 2 outside --ladder
+n=$((n+1)); if [ "$(workers)" = 1 ] && [ "$(reviews)" = 0 ]; then echo "ok   ladder: scope failure runs one worker"; else echo "FAIL ladder scope call counts"; fails=$((fails+1)); fi
+
+repo; export DS_REVIEW=0
+check "ladder: DS_REVIEW=0 skips review" 0 good --ladder
+expect "ladder: still says attempts 1" grep -q 'attempts 1' "$tmp/out"
+n=$((n+1)); if [ "$(reviews)" = 0 ] && ! grep -q 'review' "$tmp/out"; then echo "ok   ladder: review skipped"; else echo "FAIL ladder: review not skipped"; fails=$((fails+1)); fi
+unset DS_REVIEW
 
 echo "$((n-fails))/$n passed"
 [ "$fails" = 0 ]

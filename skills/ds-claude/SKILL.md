@@ -5,7 +5,7 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 # ds-claude
 
-流程：**Claude 寫規格與驗收 → DeepSeek flash 動手 → 腳本驗收 → Claude 裁決**。
+流程：**Claude 寫規格與驗收 → DeepSeek flash 動手 → 腳本驗收 → 另一家模型唯讀審查 → Claude 裁決**。失敗重做與審查都在腳本內完成，Claude 只讀最後一行。
 
 預設派工。Claude 的手只用在四件事：讀懂需求、寫 `task/` 三個檔、看結果摘要、裁決。
 
@@ -37,14 +37,15 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 | 工作 | 派法 |
 |---|---|
 | 唯讀查詢：找檔案、讀 log、彙整大量檔案、查證（原本給 Haiku 等級） | `ds-run.sh <工作目錄> --ask "問題"`，見第 4 節 |
-| 規格明確的改動：批次修改、補測試、格式轉換、照範本產檔（原本給 Sonnet 等級） | 寫 `task/` 三個檔後跑 `ds-run.sh`，失敗照第 5 節升級 |
+| 規格明確的改動：批次修改、補測試、格式轉換、照範本產檔（原本給 Sonnet 等級） | 寫 `task/` 三個檔後跑 `ds-run.sh <工作目錄> --ladder`，腳本自己重做與審查，見第 4 節 |
+| 不趕時間、失敗了使用者沒感覺的背景工作（整理、彙整、草稿），而且內容不含機密或個資 | 同上兩種派法，加 `--model <free 模型>`，見第 2 節 |
 | 跨多檔的設計、找根因、架構取捨 | 留在主模型 |
 | 幾次工具呼叫就做完，或每一步都要看上一步結果的單一鏈 | 不派，主模型直接做 |
 
 兩條守則：
 
 - 任務做到一半不換主模型。要省額度就把工作派出去，不是把主對話降級。
-- 規格明確不代表小模型做得來。驗收失敗就照第 5 節往上升，不反覆重派同一級。
+- 規格明確不代表小模型做得來。`--ladder` 三次都失敗就照第 5 節處理，不再重派同一級。
 
 工作量大不是自己做的理由：拆成多張依序派。要讀大量檔案時也派，叫 worker 把結論寫到 `task/notes.md`，Claude 只讀結論。驗收寫不出來時，先拆出寫得出來的部分派工，剩下的 Claude 做。
 
@@ -56,7 +57,7 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
   - **claude.ai／Cowork（雲端沙箱）**：沒有本機登入，需要環境變數 `OPENCODE_API_KEY`。沒有就向使用者要，只在指令內 `export`。沙箱連不到 opencode 時，回報並由 Claude 自己做。
 - key 不寫進任何檔案。
 - 工作目錄要是有 commit 的 git repo，而且乾淨。不是的話先 `git init` 並 commit，或先處理未提交的改動。
-- 不用 free 模型（可能拿資料訓練、隨時下架）。
+- free 模型可能拿資料訓練，也隨時會下架。三個條件都成立才用：不趕時間、內容不含機密或個資、失敗了使用者沒感覺。用 `--model <free 模型>` 指定（`opencode models` 查得到名稱）。free 失敗就留到下次再跑，不改派付費模型。其餘工作不用 free。
 
 ## 3. 寫 `task/` 三個檔
 
@@ -81,7 +82,19 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄>
 ```
 
-用背景執行，跑完再看結果。腳本自動選最新的 flash，逾時預設 900 秒（`DS_TIMEOUT` 可改）。腳本最後一行是結果：
+用背景執行，跑完再看結果。腳本自動選最新的 flash，逾時預設 900 秒（`DS_TIMEOUT` 可改）。
+
+預設加 `--ladder`，一條指令做完派工、重做、審查：
+
+```bash
+bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --ladder
+```
+
+- 驗收失敗或 worker 出錯（exit 1、4）：同級重做一次，再失敗換 pro 重做一次，最多三次。`FAIL scope`、`FAIL setup` 不重做。
+- 驗收通過：自動跑 `--review`（見下）。`DS_REVIEW=0` 跳過審查。
+- stdout 只有一行。通過是 `PASS: … | attempts <n> | review APPROVE`。
+
+腳本最後一行是結果：
 
 | exit | 結果 | 意思 |
 |---|---|---|
@@ -90,6 +103,17 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄>
 | 2 | `FAIL scope` | 改到範圍外，或 worker 動了 `task/` 的工單檔（已還原） |
 | 3 | `FAIL setup` | 派工前的條件不符，worker 沒有啟動 |
 | 4 | `FAIL worker` | opencode 報錯或逾時，看 `task/exec.log` |
+| 5 | `FAIL review` | 審查 REJECT，理由在同一行，全文在 `task/review.md` |
+
+### 審查
+
+```bash
+bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --review [--model m] [--spec <工單檔>]...
+```
+
+叫另一家模型唯讀審這次的改動，不花 Claude 額度。它讀工單與 `task/review.diff`，判斷改動是解決問題還是只讓驗收通過，最後回 `APPROVE` 或 `REJECT`。審查模型預設選最新的 kimi（`DS_REVIEW_MODEL` 或 `--model` 可改），不和動手的 DeepSeek 同一家。沒有 `task/` 三個檔的改動用 `--spec` 指定工單檔。
+
+要把裁決交給別的程式（例如 commit 前的檢查），設 `DS_REVIEW_RECORD=<指令>`，或放一個可執行檔在 `~/.config/ds-claude/on-review`。腳本會用 `<repo 絕對路徑> <裁決> <理由>` 呼叫它。
 
 ### 唯讀查詢
 
@@ -103,14 +127,16 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --ask "問題"
 
 ## 5. 裁決
 
-`PASS` 也要做：看 `git diff --stat <base>`（base 在 `task/base`），並抽看改動最大的檔案，確認它解決的是問題本身，不是繞過驗收。
+`PASS … review APPROVE`：只看最後一行與 `git diff --stat <base>`（base 在 `task/base`），確認改到的檔案和預期一致就收。不逐檔讀 diff，那是審查模型做過的事。改動碰錢、資安、權限或不可逆操作時，Claude 才自己讀 diff。
 
-失敗時依序升級：
+`FAIL review`（exit 5）：讀 `task/review.md` 的理由。理由成立就補進 `task/SPEC.md` 與 `task/verify.sh`，再跑 `--retry --ladder`。判斷是審查誤判，Claude 讀 diff 後自己裁決。
 
-1. **改規格**：失敗來自規格不清。修 `task/` 後跑 `--retry`，不計次數。
-2. **flash 重做一次**：`ds-run.sh <工作目錄> --retry`。改動會保留，worker 會讀 `task/verify.log`。
-3. **pro 重做一次**：`ds-run.sh <工作目錄> --retry --pro`。
-4. **Claude 接手**：保留能用的部分，或先收起 worker 的改動再自己做：`git stash push -u -m ds-claude-rollback`。收起的改動還拿得回來。
+`--ladder` 三次都失敗時：
+
+1. **改規格**：失敗來自規格不清。修 `task/` 後跑 `--retry --ladder`，不計次數。
+2. **Claude 接手**：保留能用的部分，或先收起 worker 的改動再自己做：`git stash push -u -m ds-claude-rollback`。收起的改動還拿得回來。
+
+不用 `--ladder` 時手動升級：`--retry`（同級重做，改動保留，worker 會讀 `task/verify.log`），再失敗 `--retry --pro`。
 
 `FAIL scope` 不直接重做：先看 `git status`，判斷越界的改動要留還是要還原。
 

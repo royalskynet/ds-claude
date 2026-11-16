@@ -90,11 +90,16 @@ bash skills/ds-claude/scripts/ds-run.sh <workdir>
 | `--pro` | Use the newest DeepSeek pro model instead of flash |
 | `--no-baseline` | Skip the "must fail first" check. Use it for refactors that keep behavior |
 | `--model <provider/model>` | Use a specific model |
+| `--ladder` | Retry inside the script: same model once, then pro once (3 attempts at most). After a pass, run `--review`. Prints one line |
+| `--review` | Review only. A model from another vendor reads the order and the diff, read-only, and answers `APPROVE` or `REJECT`. Add `--spec <file>` when there is no `task/` order |
 
 | Environment variable | Default | Effect |
 |---|---|---|
 | `DS_TIMEOUT` | `900` | Worker time limit in seconds |
 | `DS_MODEL` | newest flash | Same as `--model` |
+| `DS_REVIEW_MODEL` | newest `opencode-go/kimi-k*` | Reviewer model |
+| `DS_REVIEW` | `1` | `0` skips the review in `--ladder` |
+| `DS_REVIEW_RECORD` | `~/.config/ds-claude/on-review` if executable | Command called with `<repo> <verdict> <reason>` after each review |
 
 ### Results
 
@@ -105,6 +110,7 @@ bash skills/ds-claude/scripts/ds-run.sh <workdir>
 | 2 | `FAIL scope` | A change is out of scope, or the worker edited a task file |
 | 3 | `FAIL setup` | A precondition failed. The worker did not start |
 | 4 | `FAIL worker` | opencode failed or timed out. See `task/exec.log` |
+| 5 | `FAIL review` | The reviewer answered `REJECT`. The reason is on the same line, the full text in `task/review.md` |
 
 ### Read-only questions
 
@@ -189,7 +195,7 @@ Install the hook in `~/.claude/settings.json`:
 
 ## FAQ
 
-**Why a script instead of a second model as reviewer?** A reviewer from the same model shares the worker's blind spots and costs a second run. A script gives the same answer every time.
+**Why a script instead of a second model as reviewer?** A reviewer from the same model shares the worker's blind spots and costs a second run. A script gives the same answer every time. The script stays the gate. `--review` adds a second check after it, by a model from another vendor, for the one thing a script cannot see: a change that passes the check without solving the problem.
 
 **Why must `verify.sh` fail first?** A check that already passes proves nothing about the work.
 

@@ -89,11 +89,16 @@ bash skills/ds-claude/scripts/ds-run.sh <工作目錄>
 | `--pro` | 改用最新的 DeepSeek pro |
 | `--no-baseline` | 跳過「動工前必須失敗」的檢查。用於行為不變的重構 |
 | `--model <provider/model>` | 指定模型 |
+| `--ladder` | 腳本內自動重做：同級一次，再換 pro 一次（最多三次）。通過後跑 `--review`。只印一行 |
+| `--review` | 只審查。另一家模型唯讀讀工單與 diff，回 `APPROVE` 或 `REJECT`。沒有 `task/` 工單時加 `--spec <檔>` |
 
 | 環境變數 | 預設值 | 作用 |
 |---|---|---|
 | `DS_TIMEOUT` | `900` | worker 的時間上限（秒） |
 | `DS_MODEL` | 最新的 flash | 等同 `--model` |
+| `DS_REVIEW_MODEL` | 最新的 `opencode-go/kimi-k*` | 審查模型 |
+| `DS_REVIEW` | `1` | 設 `0` 時 `--ladder` 跳過審查 |
+| `DS_REVIEW_RECORD` | `~/.config/ds-claude/on-review`（可執行時） | 每次審查後用 `<repo> <裁決> <理由>` 呼叫的指令 |
 
 ### 結果
 
@@ -104,6 +109,7 @@ bash skills/ds-claude/scripts/ds-run.sh <工作目錄>
 | 2 | `FAIL scope` | 改到範圍外，或 worker 動了 task 的檔案 |
 | 3 | `FAIL setup` | 前置條件不符，worker 沒有啟動 |
 | 4 | `FAIL worker` | opencode 報錯或逾時，看 `task/exec.log` |
+| 5 | `FAIL review` | 審查回 `REJECT`，理由在同一行，全文在 `task/review.md` |
 
 ### 唯讀查詢
 
@@ -188,7 +194,7 @@ Claude 一次升一級：
 
 ## 常見問題
 
-**為什麼用腳本，不用第二個模型驗收？** 同一個模型當驗收員，盲點和 worker 一樣，還要多花一輪。腳本每次給的答案都一樣。
+**為什麼用腳本，不用第二個模型驗收？** 同一個模型當驗收員，盲點和 worker 一樣，還要多花一輪。腳本每次給的答案都一樣。驗收仍由腳本把關。`--review` 是腳本之後的第二道檢查，由另一家模型來做，只查腳本看不到的一件事：改動通過了驗收，卻沒有解決問題。
 
 **為什麼 `verify.sh` 要先失敗？** 動工前就通過的檢查，證明不了工作有做對。
 
