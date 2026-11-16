@@ -78,10 +78,21 @@ if [ "$ladder" = 1 ]; then
 fi
 
 cd "$dir" || setup_fail "cannot enter $dir"
+workdir="$(pwd -P)"
+fallback="${DS_FALLBACK:-codex}"
+case "$fallback" in 0|codex) ;; *) setup_fail "unknown DS_FALLBACK" ;; esac
+command -v codex >/dev/null || fallback=0
+primary_missing=0
+worker_name=opencode
+unavailable=""
+missing_model() {
+  [ "$fallback" = codex ] || setup_fail "$1"
+  primary_missing=1
+}
 
 if [ -z "$model" ] && [ "$review" = 0 ]; then
   model="$(opencode models 2>/dev/null </dev/null | grep -E "^opencode-go/deepseek.*$tier" | sort -V | tail -1)"
-  [ -n "$model" ] || setup_fail "no opencode-go deepseek $tier model; check opencode auth list"
+  [ -n "$model" ] || missing_model "no opencode-go deepseek $tier model; check opencode auth list"
 fi
 
 limit="${DS_TIMEOUT:-900}"
@@ -95,15 +106,82 @@ run_limited() {
     alarm $t; waitpid($p, 0); exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$limit" "$@"
 }
 
+# Monitor the primary in its own process group, including tools it spawns.
+run_primary() {
+  perl -e '
+    use Time::HiRes qw(time sleep);
+    my ($limit, $poll, $log) = splice @ARGV, 0, 3;
+    my $p = fork; die unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
+    my $start = time; my $next = 0;
+    while (1) {
+      my $done = waitpid($p, 1); my $status = $?;
+      my $bad = 0;
+      if (($done == $p || time >= $next) && open my $f, "<", $log) {
+        while (<$f>) { if (/usage limit|quota|rate limit|model not found|ProviderModelNotFound|unauthorized/i) { $bad = 1; last } }
+        close $f; $next = time + $poll;
+      }
+      if (($bad && !($done == $p && $status == 0)) || ($done != $p && time - $start >= $limit)) {
+        kill "KILL", -$p; waitpid($p, 0) unless $done == $p;
+        exit($bad ? 125 : 124);
+      }
+      if ($done == $p) { exit(($status & 127) ? 128 + ($status & 127) : $status >> 8) }
+      sleep 0.05;
+    }' "$limit" "${DS_POLL:-2}" "$1" "${@:2}"
+}
+
+# <mode> <model> <prompt> <answer file> <log file>
+run_worker() {
+  local mode="$1" selected="$2" prompt="$3" output="$4" logfile="$5" rc=0
+  local args=()
+  worker_name=opencode; unavailable=""
+  if [ "$primary_missing" = 0 ]; then
+    case "$mode" in
+      dispatch) args=(--auto) ;;
+      ask) args=(--agent plan) ;;
+      review) args=(--pure --agent plan) ;;
+    esac
+    if [ "$mode" = dispatch ]; then
+      run_primary "$logfile" opencode run --print-logs --log-level ERROR "${args[@]}" -m "$selected" "$prompt" > "$logfile" 2>&1 </dev/null
+    else
+      run_primary "$logfile" opencode run --print-logs --log-level ERROR "${args[@]}" -m "$selected" "$prompt" > "$output" 2> "$logfile" </dev/null
+    fi
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      unavailable="$(grep -iE 'usage limit|quota|rate limit|model not found|ProviderModelNotFound|unauthorized' "$logfile" | head -1 | cut -c1-80)"
+    fi
+    [ -n "$unavailable" ] || return "$rc"
+    if [ "$fallback" = 0 ]; then return 4; fi
+  fi
+  worker_name=codex
+  selected=codex
+  args=(exec --sandbox workspace-write --skip-git-repo-check -C "$workdir")
+  if [ "$mode" != dispatch ]; then
+    args=(exec --sandbox read-only --skip-git-repo-check -C "$workdir" -o "$output")
+  fi
+  if [ -n "${DS_FALLBACK_MODEL:-}" ]; then
+    args+=(-m "$DS_FALLBACK_MODEL"); selected="codex/$DS_FALLBACK_MODEL"
+  fi
+  if [ "$mode" = review ]; then rmodel="$selected"; else model="$selected"; fi
+  run_limited codex "${args[@]}" "$prompt" >> "$logfile" 2>&1 </dev/null
+}
+
+worker_failure() {
+  if [ "$worker_name" = opencode ] && [ -n "$unavailable" ]; then
+    finish 4 "FAIL worker: primary unavailable ($unavailable), no fallback"
+  fi
+  finish 4 "FAIL worker: $worker_name exit $worker, see $1"
+}
+
 if [ -n "$ask" ]; then
   mkdir -p task
   asklog() { printf '%s\t%s\t%s\t%s\t0\n' "$(date +%F)" "ask: $(printf '%s' "$ask" | tr '\t\n' '  ' | cut -c1-55)" "$model" "$1" >> task/dispatch-log.tsv; }
   before="$(git status --porcelain 2>/dev/null | grep -v ' task/' || true)"
   prompt="Answer the question by reading files in this directory. Do not create, edit or delete any file. Reply with conclusions and path:line references only, no file dumps. Question: $ask"
-  run_limited opencode run --agent plan -m "$model" "$prompt" > task/notes.md 2> task/exec.log </dev/null
+  run_worker ask "$model" "$prompt" task/notes.md task/exec.log
   worker=$?
   after="$(git status --porcelain 2>/dev/null | grep -v ' task/' || true)"
-  if [ "$worker" -ne 0 ]; then asklog worker; finish 4 "FAIL worker: opencode exit $worker, see task/exec.log"; fi
+  if [ "$worker" -ne 0 ]; then asklog worker; worker_failure task/exec.log; fi
   [ "$after" = "$before" ] || { asklog scope; finish 2 "FAIL scope: ask mode changed files"; }
   [ -s task/notes.md ] || { asklog worker; finish 4 "FAIL worker: empty answer"; }
   asklog pass
@@ -172,7 +250,7 @@ if [ "$review" = 1 ]; then
   [ -n "$rmodel" ] || rmodel="${DS_REVIEW_MODEL:-}"
   if [ -z "$rmodel" ]; then
     rmodel="$(opencode models 2>/dev/null </dev/null | grep -E '^opencode-go/glm-[0-9.]+-flash$' | sort -V | tail -1)"
-    [ -n "$rmodel" ] || setup_fail "no opencode-go glm flash review model; pass --model or set DS_REVIEW_MODEL"
+    [ -n "$rmodel" ] || missing_model "no opencode-go glm flash review model; pass --model or set DS_REVIEW_MODEL"
   fi
 
   reviewlog() { printf '%s\t%s\t%s\t%s\t0\n' "$(date +%F)" "review" "$rmodel" "$1" >> task/dispatch-log.tsv; }
@@ -180,10 +258,10 @@ if [ "$review" = 1 ]; then
   review_prompt="${review_prompt//\{SPEC\}/$spec_list}"
 
   before="$(gitst)"
-  run_limited opencode run --pure --agent plan -m "$rmodel" "$review_prompt" > task/review.md 2> task/review.log </dev/null
+  run_worker review "$rmodel" "$review_prompt" task/review.md task/review.log
   worker=$?
   after="$(gitst)"
-  if [ "$worker" -ne 0 ]; then reviewlog worker; finish 4 "FAIL worker: opencode exit $worker, see task/review.log"; fi
+  if [ "$worker" -ne 0 ]; then reviewlog worker; worker_failure task/review.log; fi
   [ "$after" = "$before" ] || { reviewlog scope; finish 2 "FAIL scope: review changed files"; }
 
   verdict="$(grep -Eo 'VERDICT:[[:space:]*]*(APPROVE|REJECT)' task/review.md | tail -1 | sed -E 's/^VERDICT:[[:space:]*]*//')"
@@ -260,7 +338,7 @@ prompt="Do the work described in task/SPEC.md. Only change paths allowed by task
 [ "$retry" = 1 ] && prompt="$prompt The previous attempt failed acceptance: read task/verify.log and fix the cause. Your earlier changes are still in the working tree."
 
 # </dev/null is required: opencode run waits for stdin EOF and hangs on an open pipe.
-run_limited opencode run --auto -m "$model" "$prompt" > task/exec.log 2>&1 </dev/null
+run_worker dispatch "$model" "$prompt" "" task/exec.log
 worker=$?
 
 log() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$(sed -n '1p' task/SPEC.md | cut -c1-60)" "$model" "$1" "$retry" >> task/dispatch-log.tsv; }
@@ -277,7 +355,7 @@ check_task() {
 [ "$(snapsum)" = "$sum" ] || { log "scope"; finish 2 "FAIL scope: worker edited the verify snapshot"; }
 check_task SPEC.md scope.txt verify.sh artifacts base
 
-if [ "$worker" -ne 0 ]; then log "worker"; finish 4 "FAIL worker: opencode exit $worker, see task/exec.log"; fi
+if [ "$worker" -ne 0 ]; then log "worker"; worker_failure task/exec.log; fi
 
 check_scope() {
   local tracked new path glob ok outside=""

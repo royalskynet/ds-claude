@@ -4,14 +4,20 @@ set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
 run="$root/skills/ds-claude/scripts/ds-run.sh"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-mkdir "$tmp/bin"
+mkdir "$tmp/bin" "$tmp/config"
+export XDG_CONFIG_HOME="$tmp/config"
 cat > "$tmp/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
 if [ "$1" = models ]; then
+  [ "${FAKE_PRIMARY:-}" != nomodels ] || exit 0
   printf '%s\n' opencode-go/deepseek-v4-pro opencode-go/deepseek-v4.1-flash opencode-go/deepseek-v4.9-flash opencode-go/glm-5.2-flash opencode-go/glm-5.3-flash opencode-go/glm-5.3 opencode-go/kimi-k2.7-code opencode-go/kimi-k3
   exit 0
 fi
 echo "args: $*" >> "$FAKE_ARGS"
+case "${FAKE_PRIMARY:-}" in
+  exit) echo 'QUOTA exhausted' >&2; exit 7 ;;
+  hang) echo 'usage limit reached' >&2; (sleep 2; echo late > src/late.txt) & sleep 30 ;;
+esac
 case " $* " in
   *" --agent plan "*)
     case "${FAKE_REVIEW:-}" in
@@ -45,9 +51,21 @@ case "$mode" in
   askwrite) echo "src/keep.txt:1 keep"; echo x > src/new.txt ;;
 esac
 STUB
-chmod +x "$tmp/bin/opencode"
+cat > "$tmp/bin/codex" <<'CODEX'
+#!/usr/bin/env bash
+echo "codex: $*" >> "$FAKE_ARGS"
+[ "${FAKE_CODEX_FAIL:-0}" = 0 ] || exit 7
+out=""; prev=""
+for a in "$@"; do [ "$prev" != -o ] || out="$a"; prev="$a"; done
+if [ -n "$out" ]; then
+  printf 'answer\nREASON: ok\nVERDICT: APPROVE\n' > "$out"
+else
+  echo ok > src/a.txt
+fi
+CODEX
+chmod +x "$tmp/bin/codex" "$tmp/bin/opencode"
 export PATH="$tmp/bin:$PATH" FAKE_ARGS="$tmp/args"
-unset DS_MODEL DS_REVIEW_MODEL DS_REVIEW DS_REVIEW_RECORD
+unset DS_MODEL DS_REVIEW_MODEL DS_REVIEW DS_REVIEW_RECORD DS_FALLBACK DS_FALLBACK_MODEL FAKE_PRIMARY FAKE_CODEX_FAIL
 fails=0; n=0
 
 repo() {
@@ -260,6 +278,47 @@ unset DS_REVIEW_MIN_LINES
 repo; check "skip: ladder" 0 good --ladder
 expect "skip: ladder says review SKIP" grep -Eq '^PASS: .* \| attempts 1 \| review SKIP$' "$tmp/out"
 unset DS_REVIEW_RECORD REC_OUT FAKE_REVIEW
+
+export DS_POLL=0.1 DS_REVIEW_MIN_LINES=0
+for primary in nomodels exit hang; do
+  export FAKE_PRIMARY="$primary"
+  repo; check "fallback $primary dispatch" 0 good
+  expect "fallback $primary model" grep -q 'model codex' "$tmp/out"
+  expect "fallback $primary workspace sandbox" grep -q -- '--sandbox workspace-write' "$FAKE_ARGS"
+  expect "fallback $primary logged" grep -q 'codex.*pass' task/dispatch-log.tsv
+  if [ "$primary" = hang ]; then
+    sleep 3
+    expect "unavailable kills children" test ! -e src/late.txt
+    expect "primary log preserved" grep -q 'usage limit' task/exec.log
+  fi
+  repo; check "fallback $primary ask" 0 answer --ask q
+  expect "fallback $primary answer" grep -q answer task/notes.md
+  expect "fallback $primary read sandbox" grep -q -- '--sandbox read-only' "$FAKE_ARGS"
+  repo; echo ok > src/a.txt; check "fallback $primary review" 0 good --review
+  expect "fallback $primary verdict" grep -q 'APPROVE, model codex' "$tmp/out"
+done
+repo; DS_FALLBACK_MODEL='custom model' check "fallback model override" 0 good
+expect "fallback model name" grep -q 'model codex/custom model' "$tmp/out"
+expect "fallback model argument" grep -q -- '-m custom model' "$FAKE_ARGS"
+repo; FAKE_CODEX_FAIL=1 check "fallback failure" 4 good
+expect "fallback failure names codex" grep -q 'codex exit 7' "$tmp/out"
+repo; DS_FALLBACK=0 check "unavailable disabled" 4 good
+expect "unavailable no fallback message" grep -q 'primary unavailable.*no fallback' "$tmp/out"
+repo; FAKE_PRIMARY=nomodels DS_FALLBACK=0 check "missing model disabled" 3 good
+repo; DS_FALLBACK=unknown check "unknown fallback" 3 good
+mkdir "$tmp/no-codex"
+cp "$tmp/bin/opencode" "$tmp/no-codex/opencode"
+if ! PATH="$tmp/no-codex:/usr/bin:/bin" command -v codex >/dev/null; then
+  repo; PATH="$tmp/no-codex:/usr/bin:/bin" FAKE_PRIMARY=exit check "missing codex unavailable" 4 good
+  expect "missing codex no fallback" grep -q 'no fallback' "$tmp/out"
+  repo; PATH="$tmp/no-codex:/usr/bin:/bin" FAKE_PRIMARY=nomodels check "missing codex missing model" 3 good
+fi
+unset FAKE_PRIMARY
+repo; check "ordinary failure does not fallback" 4 crash
+expect "ordinary failure names primary" grep -q 'opencode exit 7' "$tmp/out"
+expect "ordinary failure no codex" test "$(grep -c '^codex:' "$FAKE_ARGS")" = 0
+repo; check "primary logs enabled" 0 good
+expect "primary log flags" grep -q -- '--print-logs --log-level ERROR' "$FAKE_ARGS"
 
 echo "$((n-fails))/$n passed"
 [ "$fails" = 0 ]

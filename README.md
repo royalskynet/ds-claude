@@ -219,3 +219,12 @@ The routing table and the two guards in `SKILL.md` (do not switch the main model
 ## License
 
 [MIT](LICENSE)
+
+When OpenCode has no matching model or reports usage limit, quota, rate limit,
+missing model, or unauthorized errors, dispatch, ask, and review fall back to
+`codex exec` if installed. `DS_FALLBACK` defaults to `codex`; `0` disables it.
+`DS_FALLBACK_MODEL` selects its model. `DS_POLL` defaults to 2 seconds between
+live log checks; unavailable workers and their children are killed. Codex uses
+workspace-write for dispatch and read-only for ask/review, with the same timeout
+and acceptance checks. A Codex job reviewed by Codex is a degraded mode:
+the same model vendor reviews its own work.
