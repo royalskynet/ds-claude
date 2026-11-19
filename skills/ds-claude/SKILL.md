@@ -136,7 +136,8 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --ask "問題"
 `--ladder` 三次都失敗時：
 
 1. **改規格**：失敗來自規格不清。修 `task/` 後跑 `--retry --ladder`，不計次數。
-2. **Claude 接手**：保留能用的部分，或先收起 worker 的改動再自己做：`git stash push -u -m ds-claude-rollback`。收起的改動還拿得回來。
+2. **問顧問**：看不出失敗原因、或改規格要做取捨時，先呼叫 `advisor()` 再決定改規格或接手。顧問會讀全對話；自己只整理工單目標、`task/verify.log` 與 `task/exec.log` 尾段、已試過的做法，不貼整份 diff。沒掛顧問就略過這步。
+3. **Claude 接手**：保留能用的部分，或先收起 worker 的改動再自己做：`git stash push -u -m ds-claude-rollback`。收起的改動還拿得回來。
 
 不用 `--ladder` 時手動升級：`--retry`（同級重做，改動保留，worker 會讀 `task/verify.log`），再失敗 `--retry --pro`。
 
