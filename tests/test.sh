@@ -33,6 +33,8 @@ if [ -s "${FAKE_SEQ:-/dev/null}" ]; then
 fi
 case "$mode" in
   good)    echo ok > src/a.txt ;;
+  quota-progress) printf '%s\n' 'Adding quota support' 'Updating rate limit settings' 'Reviewed 429 files'; sleep 0.5; echo ok > src/a.txt ;;
+  quota-crash) echo 'Adding quota support'; exit 7 ;;
   bad)     echo no > src/a.txt ;;
   nothing) : ;;
   outside) echo ok > src/a.txt; echo x > other.txt ;;
@@ -314,6 +316,10 @@ if ! PATH="$tmp/no-codex:/usr/bin:/bin" command -v codex >/dev/null; then
   repo; PATH="$tmp/no-codex:/usr/bin:/bin" FAKE_PRIMARY=nomodels check "missing codex missing model" 3 good
 fi
 unset FAKE_PRIMARY
+repo; DS_FALLBACK=0 check "quota progress leaves primary running" 0 quota-progress
+repo; check "ordinary failure after quota progress" 4 quota-crash
+expect "failure after quota progress names primary" grep -q 'opencode exit 7' "$tmp/out"
+expect "failure after quota progress does not call codex" test "$(grep -c '^codex:' "$FAKE_ARGS")" = 0
 repo; check "ordinary failure does not fallback" 4 crash
 expect "ordinary failure names primary" grep -q 'opencode exit 7' "$tmp/out"
 expect "ordinary failure no codex" test "$(grep -c '^codex:' "$FAKE_ARGS")" = 0
