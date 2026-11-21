@@ -72,6 +72,7 @@ repo() {
   rm -rf "$tmp/r"; mkdir -p "$tmp/r/src" "$tmp/r/task"; cd "$tmp/r" || exit 1
   git init -q .; git config user.email t@t; git config user.name t
   echo keep > src/keep.txt; git add .; git commit -qm init
+  git update-ref refs/remotes/origin/main HEAD
   echo '# goal' > task/SPEC.md; echo 'src/*' > task/scope.txt
   printf 'set -e\ngrep -q ok src/a.txt\n' > task/verify.sh
 }
@@ -263,6 +264,11 @@ repo; seq 1 10 > src/a.txt; check "skip: 10 lines are reviewed" 5 good --review
 expect "skip: 10 lines call the model" test "$(reviews)" = 1
 repo; seq 1 40 > NOTES.md; mkdir docs; seq 1 40 > docs/guide.RST; check "skip: docs only" 0 good --review
 expect "skip: line says docs only" grep -q 'PASS review: SKIP, docs only' "$tmp/out"
+repo; seq 1 12 > src/committed.sh; git add src/committed.sh; git commit -qm 'local code'
+echo '# Local notes' > NOTES.md
+check "review: unpushed code with untracked docs is reviewed" 5 good --review
+expect "review: diff includes unpushed code" grep -q '^+++ b/src/committed.sh$' task/review.diff
+expect "review: diff includes untracked docs" grep -q '^+++ b/NOTES.md$' task/review.diff
 repo; seq 1 40 > NOTES.md; seq 1 3 > src/a.txt; check "skip: docs plus code is reviewed" 5 good --review
 repo; seq 1 40 > requirements.txt; check "skip: .txt is not a doc" 5 good --review
 repo; printf -- '-- a\n++ b\n' > src/keep.txt; seq 1 8 >> src/keep.txt; check "skip: added and removed lines both count" 5 good --review
