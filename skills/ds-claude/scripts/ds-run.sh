@@ -106,11 +106,17 @@ run_limited() {
     alarm $t; waitpid($p, 0); exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$limit" "$@"
 }
 
+limit_kind='usage limit|quota|rate[ -]limit'
+limit_error="($limit_kind)( (has been|was|is))? (exceeded|exhausted|reached)|(exceeded|exhausted|reached|hit) ((your|the) (current )?)?($limit_kind)|insufficient_quota|quota_exceeded|rate_limit_(exceeded|error)|too many requests"
+http_429='(HTTP(/[0-9.]+)?([[:blank:]]+error)?|status([ _-]?code)?"?|error)([[:blank:]]*[:=][[:blank:]]*|[[:blank:]]+)429'
+unavailable_pattern="model not found|ProviderModelNotFound|unauthorized|(^|[^[:alnum:]_])($limit_error|$http_429)([^[:alnum:]_]|$)"
+
 # Monitor the primary in its own process group, including tools it spawns.
 run_primary() {
   perl -e '
     use Time::HiRes qw(time sleep);
-    my ($limit, $poll, $log) = splice @ARGV, 0, 3;
+    my ($limit, $poll, $log, $pattern) = splice @ARGV, 0, 4;
+    my $unavailable = qr/$pattern/i;
     my $p = fork; die unless defined $p;
     if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
     my $start = time; my $next = 0;
@@ -118,7 +124,7 @@ run_primary() {
       my $done = waitpid($p, 1); my $status = $?;
       my $bad = 0;
       if (($done == $p || time >= $next) && open my $f, "<", $log) {
-        while (<$f>) { if (/usage limit|quota|rate limit|model not found|ProviderModelNotFound|unauthorized/i) { $bad = 1; last } }
+        while (<$f>) { if (/$unavailable/) { $bad = 1; last } }
         close $f; $next = time + $poll;
       }
       if (($bad && !($done == $p && $status == 0)) || ($done != $p && time - $start >= $limit)) {
@@ -127,7 +133,7 @@ run_primary() {
       }
       if ($done == $p) { exit(($status & 127) ? 128 + ($status & 127) : $status >> 8) }
       sleep 0.05;
-    }' "$limit" "${DS_POLL:-2}" "$1" "${@:2}"
+    }' "$limit" "${DS_POLL:-2}" "$1" "$unavailable_pattern" "${@:2}"
 }
 
 # <mode> <model> <prompt> <answer file> <log file>
@@ -148,7 +154,7 @@ run_worker() {
     fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
-      unavailable="$(grep -iE 'usage limit|quota|rate limit|model not found|ProviderModelNotFound|unauthorized' "$logfile" | head -1 | cut -c1-80)"
+      unavailable="$(grep -iEm1 "$unavailable_pattern" "$logfile" | cut -c1-80)"
     fi
     [ -n "$unavailable" ] || return "$rc"
     if [ "$fallback" = 0 ]; then return 4; fi
