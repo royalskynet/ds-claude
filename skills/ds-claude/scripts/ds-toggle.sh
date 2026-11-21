@@ -41,10 +41,10 @@ PY
 
 case "${1:-status}" in
   off)
-    : > "$FLAG"; if [ -f "$SRC" ]; then build_copy; set_table "$OFFCOPY"; fi
+    if [ -f "$SRC" ]; then build_copy; set_table "$OFFCOPY"; fi; : > "$FLAG"
     echo "ds-claude: OFF（實作由 Claude 自己做；/ds-claude on 重開）" ;;
   on)
-    rm -f "$FLAG" "$OFFCOPY"; set_table "~/.claude/routes.md"
+    set_table "~/.claude/routes.md"; rm -f "$FLAG" "$OFFCOPY"
     echo "ds-claude: ON（實作預設派 DeepSeek）" ;;
   refresh)
     if [ -f "$FLAG" ] && [ -f "$SRC" ]; then build_copy; set_table "$OFFCOPY"; echo "ds-claude: OFF（路由副本已重產）"; else echo "ds-claude: ON（無需重產）"; fi ;;
