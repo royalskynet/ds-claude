@@ -202,15 +202,13 @@ if [ "$review" = 1 ]; then
   gitst() { git -c core.quotePath=false status --porcelain "$@" 2>/dev/null | grep -vE '^.. task/' || true; }
   # --path keeps the diff to these pathspecs; without it the whole repo is reviewed.
   if [ "${#paths[@]}" -gt 0 ]; then scope=(-- "${paths[@]}"); else scope=(-- .); fi
-  if [ -n "$(gitst "${scope[@]}")" ]; then
-    git diff -M HEAD "${scope[@]}" ':(exclude)task' > task/review.diff
-    git -c core.quotePath=false ls-files -o --exclude-standard "${scope[@]}" | grep -v '^task/' | while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      git diff --no-index /dev/null "$f" >> task/review.diff || true
-    done
-  else
-    git log -p -M HEAD --not --remotes "${scope[@]}" > task/review.diff
-  fi
+  scope+=(':(exclude)task')
+  # A dirty worktree can coexist with unpushed commits.
+  git log -p -M HEAD --not --remotes "${scope[@]}" > task/review.diff || setup_fail "cannot read unpushed commits"
+  git diff -M HEAD "${scope[@]}" >> task/review.diff || setup_fail "cannot read working tree changes"
+  git ls-files -z -o --exclude-standard "${scope[@]}" | while IFS= read -r -d '' f; do
+    git diff --no-index -- /dev/null "$f" || [ "$?" -eq 1 ] || exit 1
+  done >> task/review.diff || setup_fail "cannot read untracked changes"
   [ -s task/review.diff ] || setup_fail "nothing to review"
 
   record() { # <verdict> <reason>
