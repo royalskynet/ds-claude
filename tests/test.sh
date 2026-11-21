@@ -14,6 +14,9 @@ if [ "$1" = models ]; then
   exit 0
 fi
 echo "args: $*" >> "$FAKE_ARGS"
+if [ -n "${FAKE_PRIMARY_ERROR:-}" ]; then
+  echo "$FAKE_PRIMARY_ERROR" >&2; exit 7
+fi
 case "${FAKE_PRIMARY:-}" in
   exit) echo 'QUOTA exhausted' >&2; exit 7 ;;
   hang) echo 'usage limit reached' >&2; (sleep 2; echo late > src/late.txt) & sleep 30 ;;
@@ -68,6 +71,7 @@ CODEX
 chmod +x "$tmp/bin/codex" "$tmp/bin/opencode"
 export PATH="$tmp/bin:$PATH" FAKE_ARGS="$tmp/args"
 unset DS_MODEL DS_REVIEW_MODEL DS_REVIEW DS_REVIEW_RECORD DS_FALLBACK DS_FALLBACK_MODEL FAKE_PRIMARY FAKE_CODEX_FAIL
+unset FAKE_PRIMARY_ERROR
 fails=0; n=0
 
 repo() {
@@ -316,6 +320,10 @@ if ! PATH="$tmp/no-codex:/usr/bin:/bin" command -v codex >/dev/null; then
   repo; PATH="$tmp/no-codex:/usr/bin:/bin" FAKE_PRIMARY=nomodels check "missing codex missing model" 3 good
 fi
 unset FAKE_PRIMARY
+for error in 'HTTP/2 429' '{"statusCode":429}' 'rate limit exceeded' 'quota exceeded' 'insufficient_quota' 'Too Many Requests' 'You exceeded your current quota'; do
+  repo; FAKE_PRIMARY_ERROR="$error" check "fallback on $error" 0 good
+  expect "fallback on $error uses codex" grep -q 'model codex' "$tmp/out"
+done
 repo; DS_FALLBACK=0 check "quota progress leaves primary running" 0 quota-progress
 repo; check "ordinary failure after quota progress" 4 quota-crash
 expect "failure after quota progress names primary" grep -q 'opencode exit 7' "$tmp/out"
