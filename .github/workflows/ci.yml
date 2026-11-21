@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS runs /bin/bash 3.2, the oldest bash the README supports.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: shell syntax
+        run: for f in skills/ds-claude/scripts/*.sh tests/*.sh; do bash -n "$f"; done
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck -S error skills/ds-claude/scripts/*.sh tests/*.sh
+      - run: bash --version | head -1
+      - run: bash tests/test.sh
+      - run: bash skills/ds-claude/scripts/ds-toggle-test.sh
+      - run: bash skills/ds-claude/scripts/subagent-redirect-test.sh
