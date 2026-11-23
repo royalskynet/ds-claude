@@ -1,21 +1,21 @@
 ---
 name: ds-claude
-description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencode run（OpenCode Go）執行，由 Claude 預先寫好的驗收腳本以 exit code 判定。要寫程式、改檔、批次修改、補測試、整理大量檔案時使用；要開 Sonnet 或 Haiku 等級的子代理前先載入本 skill，照第 1 節改派；也用於「ds-claude」「交給 opencode」「交給 deepseek」。"
+description: "主 session 只規劃與裁決，實作都派給 DeepSeek：經 opencode run（OpenCode Go）執行，由主 session 預先寫好的驗收腳本以 exit code 判定。要寫程式、改檔、批次修改、補測試、整理大量檔案時使用；要開 Sonnet 或 Haiku 等級的子代理前先載入本 skill，照第 1 節改派；也用於「ds-claude」「交給 opencode」「交給 deepseek」。"
 ---
 
 # ds-claude
 
-流程：**Claude 寫規格與驗收 → DeepSeek flash 動手 → 腳本驗收 → 另一家模型唯讀審查 → Claude 裁決**。失敗重做與審查都在腳本內完成，Claude 只讀最後一行。
+流程：**主 session 寫規格與驗收 → DeepSeek flash 動手 → 腳本驗收 → 另一家模型唯讀審查 → 主 session 裁決**。失敗重做與審查都在腳本內完成，主 session 只讀最後一行。
 
-預設派工。Claude 的手只用在四件事：讀懂需求、寫 `task/` 三個檔、看結果摘要、裁決。
+預設派工。主 session 的手只用在四件事：讀懂需求、寫 `task/` 三個檔、看結果摘要、裁決。Claude Code 與 Codex 通用；子代理攔截 hook（`subagent-redirect.sh`）只在 Claude Code 生效，Codex 無 Agent 工具，靠本節自律。
 
 ## 0. 開關（`/ds-claude on|off|status`）
 
 參數是 `on`、`off`、`status` 時，只跑 `bash <本 skill 目錄>/scripts/ds-toggle.sh <參數>`，把最後一行回報給使用者就結束，不派工。
 
-- `off`：建旗標 `~/.claude/ds-claude.off`，路由注入改成「Claude 自己動手」。跨 session 持續有效，直到 `on`。
-- 旗標存在時，本 skill 不當預設：實作由 Claude 自己做。只有使用者在那則訊息明確點名 ds-claude、opencode 或 deepseek，才照下面流程派工。
-- 有掛 `scripts/subagent-redirect.sh` hook 時，開著的 ds-claude 會擋下設定檔對應的子代理呼叫，並在拒絕訊息附上改跑的指令，照那條指令派。對照表在 `~/.config/ds-claude/redirect.json`，沒有就用 `scripts/redirect.default.json`。執行人可換成任何 CLI。要留 Claude 子代理的，prompt 加 `ds-keep`。
+- `off`：建旗標 `~/.claude/ds-claude.off`，路由注入改成「主 session 自己動手」。跨 session 持續有效，直到 `on`。
+- 旗標存在時，本 skill 不當預設：實作由主 session 自己做。只有使用者在那則訊息明確點名 ds-claude、opencode 或 deepseek，才照下面流程派工。
+- 有掛 `scripts/subagent-redirect.sh` hook（Claude Code 專用）時，開著的 ds-claude 會擋下設定檔對應的子代理呼叫，並在拒絕訊息附上改跑的指令，照那條指令派。對照表在 `~/.config/ds-claude/redirect.json`，沒有就用 `scripts/redirect.default.json`。執行人可換成任何 CLI。要留 Claude 子代理的，prompt 加 `ds-keep`。
 
 ## 1. 分流
 
@@ -23,10 +23,10 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 | 情況 | 處理 |
 |---|---|
-| 含機密或個資（憑證、用戶資料、KYC、內部文件） | 先問使用者，講明內容會送到第三方模型。同意才派，不同意就 Claude 自己做 |
-| 不可逆或對外的動作（push、部署、刪資料、發訊息） | 先問使用者，講明 worker 沒有沙箱。同意才派，不同意就 Claude 自己做 |
-| 純判斷（研判、口吻、取捨） | Claude 自己做，因為寫不出驗收 |
-| 一條指令或改一行就完成 | Claude 自己做，因為寫規格比動手久 |
+| 含機密或個資（憑證、用戶資料、KYC、內部文件） | 先問使用者，講明內容會送到第三方模型。同意才派，不同意就主 session 自己做 |
+| 不可逆或對外的動作（push、部署、刪資料、發訊息） | 先問使用者，講明 worker 沒有沙箱。同意才派，不同意就主 session 自己做 |
+| 純判斷（研判、口吻、取捨） | 主 session 自己做，因為寫不出驗收 |
+| 一條指令或改一行就完成 | 主 session 自己做，因為寫規格比動手久 |
 
 同意只算這一張工單，下一張要再問。
 
@@ -47,14 +47,14 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 - 任務做到一半不換主模型。要省額度就把工作派出去，不是把主對話降級。
 - 規格明確不代表小模型做得來。`--ladder` 三次都失敗就照第 5 節處理，不再重派同一級。
 
-工作量大不是自己做的理由：拆成多張依序派。要讀大量檔案時也派，叫 worker 把結論寫到 `task/notes.md`，Claude 只讀結論。驗收寫不出來時，先拆出寫得出來的部分派工，剩下的 Claude 做。
+工作量大不是自己做的理由：拆成多張依序派。要讀大量檔案時也派，叫 worker 把結論寫到 `task/notes.md`，主 session 只讀結論。驗收寫不出來時，先拆出寫得出來的部分派工，剩下的主 session 做。
 
 ## 2. 準備
 
-- `command -v opencode` 找不到，或沒有 OpenCode Go 登入：這次由 Claude 自己做，回報裡用一句話說明要裝 `opencode` 並登入 OpenCode Go 才能派工。不自動 `npm i -g`，那是全域安裝，使用者說要才裝。
+- `command -v opencode` 找不到，或沒有 OpenCode Go 登入：這次由主 session 自己做，回報裡用一句話說明要裝 `opencode` 並登入 OpenCode Go 才能派工。不自動 `npm i -g`，那是全域安裝，使用者說要才裝。
 - 認證依環境：
   - **Claude Code（本機）**：`opencode auth list` 要看到 OpenCode Go。沒有就請使用者自己跑 `opencode auth login`。
-  - **claude.ai／Cowork（雲端沙箱）**：沒有本機登入，需要環境變數 `OPENCODE_API_KEY`。沒有就向使用者要，只在指令內 `export`。沙箱連不到 opencode 時，回報並由 Claude 自己做。
+  - **claude.ai／Cowork（雲端沙箱）**：沒有本機登入，需要環境變數 `OPENCODE_API_KEY`。沒有就向使用者要，只在指令內 `export`。沙箱連不到 opencode 時，回報並由主 session 自己做。
 - key 不寫進任何檔案。
 - 工作目錄要是有 commit 的 git repo，而且乾淨。不是的話先 `git init` 並 commit，或先處理未提交的改動。
 - free 模型可能拿資料訓練，也隨時會下架。三個條件都成立才用：不趕時間、內容不含機密或個資、失敗了使用者沒感覺。用 `--model <free 模型>` 指定（`opencode models` 查得到名稱）。free 失敗就留到下次再跑，不改派付費模型。其餘工作不用 free。
@@ -63,7 +63,7 @@ description: "Claude 只規劃與裁決，實作都派給 DeepSeek：經 opencod
 
 **`task/SPEC.md`**
 - 目標：一句話。
-- 做法要點：關鍵決定由 Claude 做好，worker 不選方案。
+- 做法要點：關鍵決定由主 session 做好，worker 不選方案。
 - 不准做的事：例如不加依賴、不改公開介面。
 
 **`task/scope.txt`**：允許改動的路徑，一行一個 glob，例如 `src/*`。`*` 會跨目錄。
@@ -111,7 +111,7 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --ladder
 bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --review [--model m] [--spec <工單檔>]... [--path <路徑>]...
 ```
 
-叫另一家模型唯讀審這次的改動，不花 Claude 額度。它讀工單與 `task/review.diff`，判斷改動是解決問題還是只讓驗收通過，最後回 `APPROVE` 或 `REJECT`。審查模型預設選最新的 glm flash（`DS_REVIEW_MODEL` 或 `--model` 可改），不和動手的 DeepSeek 同一家，單次花費約是旗艦模型的二十分之一。沒有 `task/` 三個檔的改動用 `--spec` 指定工單檔。repo 裡有不該送給審查模型的未追蹤檔，或只想審一部分時，用 `--path <路徑>` 限定（可重複），diff 只含這些路徑內的改動。
+叫另一家模型唯讀審這次的改動，不花主 session 額度。它讀工單與 `task/review.diff`，判斷改動是解決問題還是只讓驗收通過，最後回 `APPROVE` 或 `REJECT`。審查模型預設選最新的 glm flash（`DS_REVIEW_MODEL` 或 `--model` 可改），不和動手的 DeepSeek 同一家，單次花費約是旗艦模型的二十分之一。沒有 `task/` 三個檔的改動用 `--spec` 指定工單檔。repo 裡有不該送給審查模型的未追蹤檔，或只想審一部分時，用 `--path <路徑>` 限定（可重複），diff 只含這些路徑內的改動。
 
 純文件改動（只動 `.md`／`.rst`／`.adoc`）與少於 10 行的改動不叫模型，直接印 `PASS review: SKIP, <原因>`，並登記成 APPROVE。這是多數審查機器人的做法，省下的是最常見的那批小單。行數門檻用 `DS_REVIEW_MIN_LINES` 改；改動碰錢、資安、權限或不可逆操作時設 `DS_REVIEW_MIN_LINES=0`，再小也審。
 
@@ -123,21 +123,21 @@ bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --review [--model m] [-
 bash <本 skill 目錄>/scripts/ds-run.sh <工作目錄> --ask "問題"
 ```
 
-不用寫 `task/` 三個檔，工作目錄也不必是 git repo。答案寫在 `task/notes.md`，Claude 只讀這個檔。問題要自含：worker 看不到主對話。
+不用寫 `task/` 三個檔，工作目錄也不必是 git repo。答案寫在 `task/notes.md`，主 session 只讀這個檔。問題要自含：worker 看不到主對話。
 
-結果只有三種：`PASS`（exit 0）、`FAIL scope`（exit 2，worker 改了檔案）、`FAIL worker`（exit 4，報錯、逾時或答案是空的）。改檔檢查靠 `git status` 前後比對，所以工作目錄不是 git repo 時查不到 worker 改檔。答案沒有驗收腳本把關，要拿來下結論的 `路徑:行號` 由 Claude 抽查。
+結果只有三種：`PASS`（exit 0）、`FAIL scope`（exit 2，worker 改了檔案）、`FAIL worker`（exit 4，報錯、逾時或答案是空的）。改檔檢查靠 `git status` 前後比對，所以工作目錄不是 git repo 時查不到 worker 改檔。答案沒有驗收腳本把關，要拿來下結論的 `路徑:行號` 由主 session 抽查。
 
 ## 5. 裁決
 
-`PASS … review APPROVE`：只看最後一行與 `git diff --stat <base>`（base 在 `task/base`），確認改到的檔案和預期一致就收。不逐檔讀 diff，那是審查模型做過的事。改動碰錢、資安、權限或不可逆操作時，Claude 才自己讀 diff。
+`PASS … review APPROVE`：只看最後一行與 `git diff --stat <base>`（base 在 `task/base`），確認改到的檔案和預期一致就收。不逐檔讀 diff，那是審查模型做過的事。改動碰錢、資安、權限或不可逆操作時，主 session 才自己讀 diff。
 
-`FAIL review`（exit 5）：讀 `task/review.md` 的理由。理由成立就補進 `task/SPEC.md` 與 `task/verify.sh`，再跑 `--retry --ladder`。判斷是審查誤判，Claude 讀 diff 後自己裁決。
+`FAIL review`（exit 5）：讀 `task/review.md` 的理由。理由成立就補進 `task/SPEC.md` 與 `task/verify.sh`，再跑 `--retry --ladder`。判斷是審查誤判，主 session 讀 diff 後自己裁決。
 
 `--ladder` 三次都失敗時：
 
 1. **改規格**：失敗來自規格不清。修 `task/` 後跑 `--retry --ladder`，不計次數。
-2. **問顧問**：看不出失敗原因、或改規格要做取捨時，先呼叫 `advisor()` 再決定改規格或接手。顧問會讀全對話；自己只整理工單目標、`task/verify.log` 與 `task/exec.log` 尾段、已試過的做法，不貼整份 diff。沒掛顧問就略過這步。
-3. **Claude 接手**：保留能用的部分，或先收起 worker 的改動再自己做：`git stash push -u -m ds-claude-rollback`。收起的改動還拿得回來。
+2. **問顧問**：看不出失敗原因、或改規格要做取捨時，有掛顧問（Claude 的 `advisor()`）先呼叫再決定改規格或接手。顧問會讀全對話；自己只整理工單目標、`task/verify.log` 與 `task/exec.log` 尾段、已試過的做法，不貼整份 diff。沒掛顧問就略過這步。
+3. **主 session 接手**：保留能用的部分，或先收起 worker 的改動再自己做：`git stash push -u -m ds-claude-rollback`。收起的改動還拿得回來。
 
 不用 `--ladder` 時手動升級：`--retry`（同級重做，改動保留，worker 會讀 `task/verify.log`），再失敗 `--retry --pro`。
 
@@ -154,7 +154,7 @@ worker 沒有沙箱，可以寫到 repo 外。腳本只看得到 repo 內的改�
 
 ## 6. 紀錄
 
-腳本把每次執行寫進 `task/dispatch-log.tsv`。Claude 接手時自己補一行，第四欄寫 `claude`。某類任務接手率到三分之一以上，下次這類就不派。
+腳本把每次執行寫進 `task/dispatch-log.tsv`。主 session 接手時自己補一行，第四欄寫 runtime 名（`claude`／`codex`）。某類任務接手率到三分之一以上，下次這類就不派。
 
 ## 規則
 
