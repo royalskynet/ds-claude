@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      # The acceptance-gate tests run the real wo-verify, which lives in orchestrator.
+      - run: git clone --depth 1 https://github.com/royalskynet/orchestrator "$RUNNER_TEMP/orchestrator"
+      - name: hook tests
+        run: |
+          export DEGUARD_WO_VERIFY="$RUNNER_TEMP/orchestrator/bin/wo-verify"
+          node hooks/test/delegate-guard.test.mjs
+          node --test test/*.test.mjs
