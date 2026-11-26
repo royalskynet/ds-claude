@@ -1,11 +1,11 @@
 ---
 name: ds-claude
-description: "主 session 只規劃與裁決，實作都派給 DeepSeek：經 opencode run（OpenCode Go）執行，由主 session 預先寫好的驗收腳本以 exit code 判定。要寫程式、改檔、批次修改、補測試、整理大量檔案時使用；要開 Sonnet 或 Haiku 等級的子代理前先載入本 skill，照第 1 節改派；也用於「ds-claude」「交給 opencode」「交給 deepseek」。"
+description: "主 session 只規劃與裁決，實作派給外部執行人：直跑預設經 opencode run（OpenCode Go／DeepSeek），Claude 子代理攔截的 executor 由 redirect.json 決定；由主 session 預先寫好的驗收腳本以 exit code 判定。要寫程式、改檔、批次修改、補測試、整理大量檔案時使用；要開 Sonnet 或 Haiku 等級的子代理前先載入本 skill，照第 1 節改派；也用於「ds-claude」「交給 opencode」「交給 deepseek」。"
 ---
 
 # ds-claude
 
-流程：**主 session 寫規格與驗收 → DeepSeek flash 動手 → 腳本驗收 → 另一家模型唯讀審查 → 主 session 裁決**。失敗重做與審查都在腳本內完成，主 session 只讀最後一行。
+流程：**主 session 寫規格與驗收 → 外部執行人動手 → 腳本驗收 → 另一家模型唯讀審查 → 主 session 裁決**。失敗重做與審查都在腳本內完成，主 session 只讀最後一行。`ds-run.sh` 是直跑 lane（底層 DeepSeek flash）；Claude 子代理攔截 lane 的 executor 以 `redirect.json` 為準，兩者可以不同。
 
 預設派工。主 session 的手只用在四件事：讀懂需求、寫 `task/` 三個檔、看結果摘要、裁決。Claude Code 與 Codex 通用；子代理攔截 hook（`subagent-redirect.sh`）只在 Claude Code 生效，Codex 無 Agent 工具，靠本節自律。
 
