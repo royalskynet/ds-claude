@@ -17,6 +17,13 @@ description: "主 session 只規劃與裁決，實作派給外部執行人：直
 - 旗標存在時，本 skill 不當預設：實作由主 session 自己做。只有使用者在那則訊息明確點名 ds-claude、opencode 或 deepseek，才照下面流程派工。
 - 有掛 `scripts/subagent-redirect.sh` hook（Claude Code 專用）時，開著的 ds-claude 會擋下設定檔對應的子代理呼叫，並在拒絕訊息附上改跑的指令，照那條指令派。對照表在 `~/.config/ds-claude/redirect.json`，沒有就用 `scripts/redirect.default.json`。執行人可換成任何 CLI。要留 Claude 子代理的，prompt 加 `ds-keep`。
 
+### 0.1 per-agent 政策（`~/.config/ds-claude/policy.conf`）
+
+- `agent.<名>=on|off`：每個 agent 獨立開關。預設 cc=on、devin=off、codex=off、agent.default=off。Devin 走 O 直接派，不經 ds-claude。
+- `order.<難度>=of|os|od|off`：子代理改派時該難度用哪種 O 派法。目前預設 easy=of（只用免費）、mid=od、hard=od（DeepSeek flash）。off=該難度不攔。
+- 用指令改：`bash <本skill>/scripts/ds-policy.sh set order.mid of`／`set agent.devin on`；自然語言要求改時直接改 policy.conf 對應行。`ds-policy.sh show` 看現況。
+- 執行層已併入 Orchestrator：`ds-run` 不存在了。實作走 `dcq contract`，唯讀走 `dcq ask`，審查走 `dcq review`，重試由 dcq fallback 階梯負責。
+
 ## 1. 分流
 
 預設全部派，只有下列情況例外：
@@ -36,8 +43,8 @@ description: "主 session 只規劃與裁決，實作派給外部執行人：直
 
 | 工作 | 派法 |
 |---|---|
-| 唯讀查詢：找檔案、讀 log、彙整大量檔案、查證（原本給 Haiku 等級） | `ds-run.sh <工作目錄> --ask "問題"`，見第 4 節 |
-| 規格明確的改動：批次修改、補測試、格式轉換、照範本產檔（原本給 Sonnet 等級） | 寫 `task/` 三個檔後跑 `ds-run.sh <工作目錄> --ladder`，腳本自己重做與審查，見第 4 節 |
+| 唯讀查詢：找檔案、讀 log、彙整大量檔案、查證（原本給 Haiku 等級） | `bash <本skill>/scripts/ds-dispatch.sh <工作目錄> easy --ask "問題"` |
+| 規格明確的改動：批次修改、補測試、格式轉換、照範本產檔（原本給 Sonnet 等級） | 寫 `task/` 三個檔後跑 `bash <本skill>/scripts/ds-dispatch.sh <工作目錄> mid`，dcq fallback 階梯接手重試；審查用 `dcq review` |
 | 不趕時間、失敗了使用者沒感覺的背景工作（整理、彙整、草稿），而且內容不含機密或個資 | 同上兩種派法，加 `--model <free 模型>`，見第 2 節 |
 | 跨多檔的設計、找根因、架構取捨 | 留在主模型 |
 | 幾次工具呼叫就做完，或每一步都要看上一步結果的單一鏈 | 不派，主模型直接做 |

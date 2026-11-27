@@ -4,6 +4,9 @@
 # Off switch: ~/.claude/ds-claude.off (`/ds-claude off`). No jq or bad config -> allow (fail open, never blocks by accident).
 in="$(cat)"
 [ -f "${DS_CLAUDE_OFF_FLAG:-$HOME/.claude/ds-claude.off}" ] && exit 0
+# per-agent 政策：cc 關閉時放行（讀不到 ds-policy.sh 就維持 fail-open）
+_pol="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" 2>/dev/null && pwd)/ds-policy.sh"
+if [ -x "$_pol" ] && [ "$("$_pol" agent cc 2>/dev/null)" != on ]; then exit 0; fi
 PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 command -v jq >/dev/null 2>&1 || exit 0
 here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
