@@ -134,7 +134,7 @@ Claude 一次升一級：
 
 ### 開關與子代理轉派
 
-`/ds-claude off` 關掉 ds-claude，直到 `/ds-claude on`（旗標檔 `~/.claude/ds-claude.off`）。預設開。
+`/ds-claude off` 關掉 ds-claude，直到 `/ds-claude on`（寫入 `~/.config/ds-claude/policy.conf` 的 `agent.cc=off`；舊旗標 `~/.claude/ds-claude.off` 仍相容）。預設開。
 
 `scripts/subagent-redirect.sh` 是選用的 Claude Code `PreToolUse` hook，對 `Agent|Task` 生效。ds-claude 開著時，設定檔有對應的子代理呼叫會被擋下，並告訴 Claude 改跑哪條指令，工作就不耗 Claude token。預設 `model: sonnet` 轉 `ds-run.sh`、`model: haiku` 轉 `ds-run.sh --ask`；沒寫 model 的呼叫，以及 `Explore`、`Plan`、`statusline-setup` 代理放行。
 

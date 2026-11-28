@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ds-claude 政策查寫。用法：
 #   ds-policy.sh show              印整份政策
-#   ds-policy.sh agent <名>        印 on|off（agent.<名> → agent.default → off）
+#   ds-policy.sh agent <名>        印 on|off（agent.<名> → agent.default → cc 預設 on、其他 off）
 #   ds-policy.sh order <難度>      印 of|os|od|off（order.<難度> → order.default → of）
 #   ds-policy.sh env <難度>        印對應 env 前綴（of=DCQ_ORDER=free；os=DCQ_ORDER=sub；od=DCQ_MODELS=flash）
 #   ds-policy.sh set <key> <值>    改政策（agent.devin on／order.mid od …）
@@ -14,7 +14,10 @@ get() { # $1=key $2=fallback-key（可空）$3=最終預設
 }
 case "${1:-show}" in
   show) cat "$CFG" 2>/dev/null ;;
-  agent) get "agent.${2:-}" agent.default off; echo ;;
+  agent)
+    a="${2:-cc}"
+    d=off; [ "$a" = cc ] && d=on
+    get "agent.$a" agent.default "$d"; echo ;;
   order) get "order.${2:-}" order.default of; echo ;;
   env)
     case "$(get "order.${2:-}" order.default of)" in
@@ -26,7 +29,8 @@ case "${1:-show}" in
     esac ;;
   set)
     [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "用法：ds-policy.sh set <key> <值>" >&2; exit 2; }
-    touch "$CFG"
+    mkdir -p "$(dirname "$CFG")" || exit 1
+    touch "$CFG" || exit 1
     if grep -q "^$2=" "$CFG"; then
       tmp="$(mktemp)"; awk -F= -v k="$2" -v v="$3" '$1==k{$0=k"="v}1' "$CFG" > "$tmp" && mv "$tmp" "$CFG"
     else echo "$2=$3" >> "$CFG"; fi

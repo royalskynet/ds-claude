@@ -136,7 +136,7 @@ Claude moves up one step at a time:
 
 ### On/off switch and subagent redirect
 
-`/ds-claude off` turns ds-claude off until `/ds-claude on` (flag file `~/.claude/ds-claude.off`). It is on by default.
+`/ds-claude off` turns ds-claude off until `/ds-claude on` (it writes `agent.cc=off` to `~/.config/ds-claude/policy.conf`; the legacy flag `~/.claude/ds-claude.off` is still honored). It is on by default.
 
 `scripts/subagent-redirect.sh` is an optional Claude Code `PreToolUse` hook for `Agent|Task`. While ds-claude is on, it denies a subagent call that its config maps to another executor and tells Claude the command to run instead, so the work does not burn Claude tokens. Out of the box, `model: sonnet` goes to `ds-run.sh` and `model: haiku` goes to `ds-run.sh --ask`. Calls without a model, and the `Explore`, `Plan`, and `statusline-setup` agents, pass.
 

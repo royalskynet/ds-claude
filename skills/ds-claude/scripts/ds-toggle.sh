@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # /ds-claude on|off|status [agent名]：per-agent 開關，寫 ~/.config/ds-claude/policy.conf 的 agent.<名>。
 # 不給 agent 名時：Claude Code 裡用 cc。舊全域旗標 ~/.claude/ds-claude.off 仍被 hook 相容讀取，但不再由這裡產生。
-set -u
+set -euo pipefail
 here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
 pol="$here/ds-policy.sh"
 agent="${2:-cc}"

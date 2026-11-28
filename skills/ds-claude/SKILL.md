@@ -13,8 +13,8 @@ description: "主 session 只規劃與裁決，實作派給外部執行人：直
 
 參數是 `on`、`off`、`status` 時，只跑 `bash <本 skill 目錄>/scripts/ds-toggle.sh <參數>`，把最後一行回報給使用者就結束，不派工。
 
-- `off`：建旗標 `~/.claude/ds-claude.off`，路由注入改成「主 session 自己動手」。跨 session 持續有效，直到 `on`。
-- 旗標存在時，本 skill 不當預設：實作由主 session 自己做。只有使用者在那則訊息明確點名 ds-claude、opencode 或 deepseek，才照下面流程派工。
+- `off`：把 `agent.cc=off` 寫進 `~/.config/ds-claude/policy.conf`，實作改由主 session 自己做。跨 session 持續有效，直到 `on`；舊旗標 `~/.claude/ds-claude.off` 仍被 hook 相容讀取。
+- `agent.cc=off` 或舊旗標存在時，本 skill 不當預設：實作由主 session 自己做。只有使用者在那則訊息明確點名 ds-claude、opencode 或 deepseek，才照下面流程派工。
 - 有掛 `scripts/subagent-redirect.sh` hook（Claude Code 專用）時，開著的 ds-claude 會擋下設定檔對應的子代理呼叫，並在拒絕訊息附上改跑的指令，照那條指令派。對照表在 `~/.config/ds-claude/redirect.json`，沒有就用 `scripts/redirect.default.json`。執行人可換成任何 CLI。要留 Claude 子代理的，prompt 加 `ds-keep`。
 
 ### 0.1 per-agent 政策（`~/.config/ds-claude/policy.conf`）
